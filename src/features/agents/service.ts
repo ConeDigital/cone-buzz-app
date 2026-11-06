@@ -357,7 +357,14 @@ export type AgentTab<Config = unknown> = Readonly<{
 export type AgentAddedTab = Readonly<{
   id: string;
   title: string;
-  component: ComponentType<{ agent: Agent }>;
+  component: ComponentType<{
+    agent: Agent;
+    /** Opens a link, such as a profile, where the tab is shown; false when it
+     * can't there. Absent where the tab can open nothing. */
+    open?: ((target: string) => boolean) | undefined;
+    /** Whether `open` can open this link, so the tab shows it as text if not. */
+    canOpen?: ((target: string) => boolean) | undefined;
+  }>;
   /** Whether the tab shows for this agent; absent, it shows for each. */
   when?: (agent: Agent) => boolean;
   /** Calls `listener` when `when` may answer differently. */
@@ -2280,10 +2287,12 @@ export class AgentsService extends Service implements Agents {
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
-      woke: (key, object, events) =>
+      woke: (key, object, events) => {
+        const at = Math.floor(Date.now() / 1000);
         this.history(
           key,
           object,
+          // A timer has no event, so its wake is what it was asked to do.
           events?.map((event) => ({
             id: event.id,
             at: event.created_at,
@@ -2298,9 +2307,13 @@ export class AgentsService extends Service implements Agents {
                 ? [tag[1]]
                 : [],
             ),
-          })),
-          Math.floor(Date.now() / 1000),
-        ),
+          })) ??
+            (object.value.type === "timer"
+              ? [{ at, text: object.value.prompt }]
+              : undefined),
+          at,
+        );
+      },
       finished: (key) => {
         void this.coreMemory.refresh(key);
         this.retakeType(key);

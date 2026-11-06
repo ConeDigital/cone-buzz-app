@@ -5113,6 +5113,22 @@ const tick = {
   },
 } as const;
 
+it("records each timer wake in its activity", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, { attention: tick });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() =>
+    expect(service.find(bot)?.attentionHistory?.["watch/tick"]).toEqual({
+      lastWokeAt: 1_060,
+      events: [{ at: 1_060, text: "check in" }],
+    }),
+  );
+});
+
 it("pauses an interest's timer without changing its enabled setting and resumes overdue work", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run } = await setup();
