@@ -1259,6 +1259,29 @@ evidence. A batch with a recognized denied channel is hidden as a whole.
 
 Activity frames (24200) and turn metrics (44200) are no longer saved locally or
 restored after reload; plugin harnesses show history from their own session files.
+An open transcript (`TranscriptPanel`, `src/features/agents/TranscriptPanel.tsx`)
+reads that history in full on open, on Refresh, and when a turn starts or
+ends. While the agent works it reads again after each read finishes, waiting
+2.5 s or twice that read's duration, whichever is longer, and on the steps the
+agent reports (`Agents.subscribeSteps`): a step reads no sooner than 1 s, or
+that doubled duration, after the previous read finishes, and steps inside that
+gap make one read. These use the harness's `readLatest` when it has one: only
+the latest turns, swapped over the end of the held transcript by `turnId` from
+the first turn it holds, at most 50 turns, or a full read when they don't
+continue it. Claude Code reads the last 2 MiB of its saved session, finding
+the project folder once per workspace; while a turn is larger than that, it
+keeps what is shown and reads in full every 30 s. Codex reads recent turns,
+and keeps only the rollout records restoring tools needs, for 2 files at
+most, parsing just the lines appended since its last read; a file that shrank
+is read whole again, and a turn ending frees them. Pi reads recent turns, and a
+transcript read stops waiting on the shared worker when cancelled. goose has
+no recent-messages API, so it reads in full, but its automatic reads while a
+session works export only that one and reuse the others' last export; open,
+Refresh and a turn starting or ending export every session. Automatic reads
+wait while the window is hidden, and so do Pi's retries. One read runs at a
+time; a change of conversation, read inputs or working state aborts it at
+once, even while hidden, and the last result stays while the next is read.
+Only the first read and Refresh show as loading.
 The host archive store (`src-tauri/src/archive`, `browser-host/archive.mjs`) and
 any existing `archive/events.sqlite3` remain until a follow-up removes them.
 
