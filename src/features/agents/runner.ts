@@ -1,3 +1,4 @@
+import { interestPaused } from "./attention";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
 // host run each agent. It knows nothing of where it runs: everything it needs
@@ -938,7 +939,12 @@ export class AgentRunners {
     const watches: CompiledWatch[] = [];
     for (const object of Object.values(agent.attention)) {
       const watch = object.value;
-      if (watch.type !== "event" || !watch.enabled) continue;
+      if (
+        watch.type !== "event" ||
+        !watch.enabled ||
+        interestPaused(agent.attention, watch.interest_id)
+      )
+        continue;
       const interest = agent.attention[`interest/${watch.interest_id}`]?.value;
       watches.push({
         slug: object.slug,
@@ -2115,7 +2121,8 @@ export class AgentRunners {
         epoch === runner.epoch &&
         agent.attention[object.slug] === object &&
         object.value.type === "source" &&
-        object.value.enabled
+        object.value.enabled &&
+        !interestPaused(agent.attention, object.value.interest_id)
         ? job
         : undefined;
     }
@@ -2185,7 +2192,8 @@ export class AgentRunners {
       job.matched.epoch === runner.epoch &&
       object === job.matched.object &&
       object.value.type === "timer" &&
-      object.value.enabled
+      object.value.enabled &&
+      !interestPaused(agent.attention, object.value.interest_id)
     );
   }
 
@@ -2218,7 +2226,12 @@ export class AgentRunners {
       | undefined;
     for (const object of Object.values(agent.attention)) {
       const timer = object.value;
-      if (timer.type !== "timer" || !timer.enabled) continue;
+      if (
+        timer.type !== "timer" ||
+        !timer.enabled ||
+        interestPaused(agent.attention, timer.interest_id)
+      )
+        continue;
       const saved = timers[object.slug];
       const state = timerState(timer, saved, now);
       if (state !== saved)

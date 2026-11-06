@@ -25,7 +25,7 @@ import type {
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
 import { bundledAttention } from "./attention-command";
-import { sourceCompleted, sourceSignature } from "./attention";
+import { interestPaused, sourceCompleted, sourceSignature } from "./attention";
 import {
   AgentProtectionService,
   type AgentProtection,
@@ -258,6 +258,8 @@ export type AgentChange<Config = unknown> = Readonly<{
   attentionEnabled?: boolean;
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
+  /** Rejects an Attention edit if any displayed object changed before saving. */
+  attentionExpected?: Readonly<Record<string, AttentionObject>>;
   /** Sets only a watch's enabled state, if the displayed object is still current. */
   watchEnabled?: Readonly<
     Record<string, Readonly<{ enabled: boolean; expected: AttentionObject }>>
@@ -1449,6 +1451,12 @@ const ownRecord = (
 /** `record` with the owner's `change` to its settings; throws when the
  * change is not valid for it. */
 function changed(record: AgentRecord, change: AgentChange): AgentRecord {
+  for (const [slug, expected] of Object.entries(
+    change.attentionExpected ?? {},
+  )) {
+    if (JSON.stringify(record.attention[slug]) !== JSON.stringify(expected))
+      throw new Error("Attention changed. Review it and try again.");
+  }
   let next = record;
   if (change.config !== undefined) next = { ...next, config: change.config };
   if (change.attentionEnabled !== undefined) {
@@ -2721,7 +2729,8 @@ export class AgentsService extends Service implements Agents {
           if (
             !agent?.attentionEnabled ||
             agent.attention[object.slug] !== object ||
-            !object.value.enabled
+            !object.value.enabled ||
+            interestPaused(agent.attention, object.value.interest_id)
           )
             throw new Error("This source watch is no longer enabled");
           // Output keeps its end, where a failure is summarised.
