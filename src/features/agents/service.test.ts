@@ -12926,6 +12926,175 @@ it("changes instructions in place and discards a dismissed change draft", async 
   expect(native.setType).not.toHaveBeenCalled();
 });
 
+it("reads synced instructions it can't use as unavailable, not empty", async () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.instructions",
+  };
+  const f = await setup({
+    binding: () => ({ instructions: { mode: "synced", subject } }),
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+  const handle = f.plugin.agents.handle(bot);
+  if (!handle?.readAgents) throw new Error("Missing read handle");
+  const store = internals(f.service).configStore;
+  const head = (content: string, op = "create", problem?: string) => {
+    const event = finalizeEvent(
+      { kind: 45010, created_at: 1, content, tags: [["op", op]] },
+      generateSecretKey(),
+    ) as RelayEvent;
+    store.applyRead(subject, store.capture(subject), {
+      kind: "head",
+      event,
+      ...(problem && { problem }),
+    });
+    return event;
+  };
+  const read = () => handle.readAgents?.(bot);
+  // Unavailable: nothing confirmed yet.
+  expect(await read()).toEqual({
+    pubkey: bot,
+    name: "Echo",
+    type: "example/echo",
+    unavailable: expect.any(String),
+  });
+  head(JSON.stringify({ version: 1 }), "create", "No instructions text");
+  expect(await read()).toMatchObject({ unavailable: expect.any(String) });
+  expect(await read()).not.toHaveProperty("revision");
+  head("", "delete");
+  expect(await read()).toMatchObject({ unavailable: expect.any(String) });
+  expect(await read()).not.toHaveProperty("revision");
+  // Empty instructions that are valid stay a synced success.
+  const empty = head(JSON.stringify({ version: 1, text: "" }));
+  expect(await read()).toMatchObject({ synced: true, revision: empty.id });
+  expect(await read()).not.toHaveProperty("unavailable");
+  await f.ctx.fiber.dispose();
+});
+
+it("reads the owner's agents and teams, and saves only a reviewed team draft", async () => {
+  const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  const team = await service.saveTeam({
+    draft: crypto.randomUUID(),
+    name: "Crew",
+    instructions: "Ship.",
+    members: [bot, sibling],
+  });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.readAgents || !handle.readTeams || !handle.updateTeam)
+    throw new Error("Missing config handles");
+  expect(await handle.readAgents()).toEqual([
+    expect.objectContaining({ pubkey: bot, name: "Parent" }),
+    expect.objectContaining({ pubkey: sibling, name: "Child" }),
+    {
+      pubkey: hostedKey,
+      name: "Sky",
+      type: "example/cloud",
+      unavailable: "Its provider keeps its config",
+    },
+  ]);
+  expect(await handle.readAgents("Child")).toMatchObject({
+    pubkey: sibling,
+    type: "example/echo",
+    synced: false,
+  });
+  await expect(handle.readAgents("Nobody")).rejects.toThrow("no agent");
+  // Synced config the owner can read is returned, read only.
+  const internals = service as unknown as {
+    callerOrigin(agent: unknown): string;
+    communityConfigs: Map<string, unknown>;
+  };
+  const origin = internals.callerOrigin(service.find(bot));
+  const before = internals.communityConfigs.get(origin);
+  const readInstructions = vi.fn(async () => ({
+    instructions: "Fly.",
+    revision: "r1",
+  }));
+  internals.communityConfigs.set(origin, {
+    binding: () => undefined,
+    ...(before as object),
+    readInstructions,
+  });
+  try {
+    // A named local agent reads no remote one.
+    await handle.readAgents("Child");
+    expect(readInstructions).not.toHaveBeenCalled();
+    expect(await handle.readAgents("Sky")).toEqual({
+      pubkey: hostedKey,
+      name: "Sky",
+      type: "example/cloud",
+      instructions: "Fly.",
+      revision: "r1",
+      synced: true,
+    });
+    expect(readInstructions).toHaveBeenCalledWith(hostedKey);
+  } finally {
+    if (before) internals.communityConfigs.set(origin, before);
+    else internals.communityConfigs.delete(origin);
+  }
+  expect(await handle.readTeams(team.id)).toEqual({
+    id: team.id,
+    name: "Crew",
+    instructions: "Ship.",
+    members: [
+      { pubkey: bot, name: "Parent" },
+      { pubkey: sibling, name: "Child" },
+    ],
+    synced: false,
+  });
+  await expect(handle.updateTeam({ team: "Crew" })).rejects.toThrow(
+    "at least one change",
+  );
+  const { requestId } = await handle.updateTeam({
+    team: "Crew",
+    instructions: "Ship carefully.",
+  });
+  expect(service.teamUpdateRequests()).toEqual([
+    expect.objectContaining({
+      id: requestId,
+      team: team.id,
+      base: { name: "Crew", instructions: "Ship." },
+      instructions: "Ship carefully.",
+    }),
+  ]);
+  expect(await handle.readTeams("Crew")).toMatchObject({
+    instructions: "Ship.",
+  });
+  await service.approveTeamUpdate(requestId, {
+    name: "Crew",
+    instructions: "Ship with care.",
+  });
+  expect(await handle.readTeams("Crew")).toMatchObject({
+    instructions: "Ship with care.",
+    members: [{ pubkey: bot }, { pubkey: sibling }],
+  });
+  expect(service.teamUpdateRequests()).toEqual([]);
+  // A draft over a team that changed since is refused, and kept to dismiss.
+  const stale = await handle.updateTeam({ team: team.id, name: "Squad" });
+  await service.saveTeam({
+    id: team.id,
+    name: "Crew",
+    instructions: "Elsewhere.",
+    members: [bot, sibling],
+  });
+  await expect(
+    service.approveTeamUpdate(stale.requestId, {
+      name: "Squad",
+      instructions: "Elsewhere.",
+    }),
+  ).rejects.toThrow("changed since");
+  service.dismissTeamUpdate(stale.requestId);
+  expect(service.teamUpdateRequests()).toEqual([]);
+});
+
 it("drafts a proposed picture for the owner to save, and refuses one that is not an HTTPS image", async () => {
   const { service, native, plugin } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });
