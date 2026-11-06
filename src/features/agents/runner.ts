@@ -490,6 +490,8 @@ export type RunnerHost = {
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Buzz settings on this device, where there are any. */
   settings?(): DeviceSettings | undefined;
+  /** Owner reads for a run of the agent, where this build enables them. */
+  ownerAccess?(agent: Agent): AgentHandle["ownerAccess"];
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -2678,6 +2680,12 @@ export class AgentRunners {
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
     const settings = run ? this.host.settings?.() : undefined;
+    // Only a bundled harness's run: an installed harness plugin is not trusted
+    // with its owner's access.
+    const ownerAccess =
+      run && runner.type?.revision === "bundled"
+        ? this.host.ownerAccess?.(agent)
+        : undefined;
     const handle = guarded(
       {
         protection: protection && {
@@ -2775,6 +2783,7 @@ export class AgentRunners {
         tabs: () => this.host.tabs(agent),
         // Only a run's: a plugin acting through the agent doesn't get them.
         ...(settings && { settings }),
+        ...(ownerAccess && { ownerAccess }),
         notes: (channelId: string, root?: string) => {
           const pending = runner.notes.get(channelId) ?? [];
           const matches = (note: { root: string | undefined }) =>
