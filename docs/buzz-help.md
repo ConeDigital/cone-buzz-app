@@ -461,6 +461,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose
   **Open in browser**.
+- **Close tabs or the window (macOS)**: ⌘W closes the active tab. With no tab
+  to close, it closes the window while Buzz and running agents stay open.
+  Reopen Buzz from the Dock. ⌘⇧W clears the current channel's tabs without
+  closing the window. These tab shortcuts do nothing while a modal is open.
 - **Conversation members**: click the combined member avatars and conversation
   name in the header to open membership management. Other header actions remain
   on the right. Compact avatars sit before the name on the left; Solo chats show
