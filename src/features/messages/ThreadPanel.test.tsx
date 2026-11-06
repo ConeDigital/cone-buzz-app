@@ -2513,5 +2513,7 @@ it("reveals a completed step selected by an exact thread link", async () => {
   });
   h.render();
   expect(await screen.findByText("Completed tool result")).toBeVisible();
-  expect(screen.queryByRole("button", { name: /activity history/ })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: /Collapse activity history/ }),
+  ).toBeVisible();
 });
