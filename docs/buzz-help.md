@@ -518,14 +518,22 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Drafts & sent** is part of Messages. Opening it keeps the conversation
   sidebar available, so you can switch straight back to a chat. Use the **Drafts**
   and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
-  Rows use Activity’s message layout, with recipient identities in Sent. It lists
+  Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages
   sidebar, and your latest 100 sent messages in this community, grouped by
   day. A sent message shows who replied after you ("2 after you") or that you
   were last ("You're last"); a channel post shows its reply count. Select a
-  draft to continue it in its conversation, or a sent message to jump to it.
-  Search matches the conversation name and what you wrote. It reads only this
+  draft to edit and send in a conversation preview beside the list; **Open
+  conversation** opens its original destination. Narrow windows show the preview
+  with **Back to drafts**. After confirmed delivery the preview closes; failed
+  sends stay in its message history with Retry. Select a sent message to preview
+  it in context and reply in place; Sent previews stay open after sending. Both
+  previews use the conversation’s saved draft, if one exists. Archived or read-only
+  Sent destinations show the conversation without a composer, with an archived
+  or read-only notice and Join when available. The popout icon
+  opens the original conversation.
+  Search above the list matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
   attached files without opening the conversation. The same drafts show where
   you left them: a pencil at the right edge of a channel or DM's sidebar row
