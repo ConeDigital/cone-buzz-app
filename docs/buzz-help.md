@@ -791,7 +791,15 @@ confirmation.
   types give no reason.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
-  what that agent is watching and whether Attention is on for this device. A
+  when each interest wakes the agent (**Triggers**), its instructions after waking
+  (**Instructions**), and whether Attention is active on this device. Use its Active/Paused menu to change that.
+  With nothing watched yet, a sonar preview shows example requests. Send your own request in a conversation with the agent.
+  Each watch shows its source and Active or Paused state. Expand a
+  watch, then expand “Activity” for a compact event timeline. Expand an event to read its full
+  content, or expand “Watch details” for conditions and the execution destination. Select its status pill to
+  activate, pause, or delete it, or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
+  “Runs in” names its execution conversation; its instructions can specify a
+  different place to report. A
   mention can still wake an agent when Attention is off; turning Attention on does not grant new access.
   On macOS and Linux, watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous
