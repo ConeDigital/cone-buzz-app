@@ -1314,10 +1314,13 @@ tasks unknown.
 
 ### Activity updates in the conversation
 
-The live conversation indicator remains visible while agents work, even when
-recorded activity is collapsed or expanded. It keeps dots beside current tool
-labels; reduced motion leaves the dots static. Activity text may shimmer too,
-but does not replace that persistent working cue.
+When no live activity bubble on the triggering message shows an agent, the live
+conversation indicator remains visible while it works, even when recorded
+activity is collapsed or expanded. While that bubble shows, it is the agent's
+working indicator and the conversation adds no second one; the conversation cue
+returns once recorded history owns the work. The indicator keeps dots beside
+current tool labels; reduced motion leaves the dots static. Activity text may
+shimmer too, but does not replace that persistent working cue.
 When local request evidence is available, old activity does not inherit the
 working/thinking state of a different request in the same thread.
 
