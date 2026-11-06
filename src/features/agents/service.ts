@@ -756,7 +756,43 @@ export type ConfigBinding = Readonly<{
   instructions?: Readonly<{ mode: Mode; subject: Subject }>;
 }>;
 
+/** A room audio pipe, not authorization to run tools. The harness obtains its
+ * own AgentHandle and applies its ordinary per-turn authorization. */
+export type AgentVoiceSeat<Config = unknown> = Readonly<
+  {
+    agent: Agent<Config>;
+    /** Always channel-scoped, regardless of the harness setting; never invent a root. */
+    conversation: Readonly<{ channelId: string }>;
+    signal: AbortSignal;
+    /** Final lines only: h-tag-only agent posts; own events never trigger this agent. */
+    transcript(speaker: "owner" | "agent", text: string): Promise<void>;
+    /** 48 kHz mono; native accepts exactly 960 finite samples with |s| <= 1,
+     * dropping frames when its capacity-5 queue is full. */
+    output(samples: number[]): Promise<void>;
+    /** Idempotent disconnect notification, ignored after signal aborts. */
+    ended(error?: Error): void;
+  } & Pick<Delivery<Config>, "config" | "revisions" | "synced" | "team">
+>;
+
+/** Host pipe before the agents service resolves launch settings and transcript policy. */
+export type AgentVoicePipe = Omit<
+  AgentVoiceSeat,
+  "config" | "revisions" | "synced" | "team" | "transcript"
+>;
+type HostedAgentType = Omit<AgentType, "voice"> & {
+  voice?(seat: AgentVoicePipe): Promise<AgentVoiceConnection>;
+};
+export type AgentVoiceConnection = Readonly<{
+  /** Owner-only 48 kHz mono frames of up to 5760 samples (native plays out 10 ms frames). Borrowed for this call. */
+  input(samples: number[]): void;
+  /** Host aborts signal, then awaits close to finish teardown. Idempotent. */
+  close(): void | Promise<void>;
+}>;
+
 export type AgentType<Config = unknown> = {
+  /** Huddles supplies a running agent owned by the current viewer.
+   * Full-duplex voice on the existing room conversation; abort closes the pipe. */
+  voice?(seat: AgentVoiceSeat<Config>): Promise<AgentVoiceConnection>;
   /** Native callback events this harness exposes to plugins. */
   hooks?: Readonly<{ events: readonly string[] }>;
   id: string;
@@ -1005,7 +1041,7 @@ export type HostedInstructions = Readonly<{
 /** A hosted agent's instructions changed since the caller read them. */
 export const HOSTED_INSTRUCTIONS_CHANGED =
   "Its instructions were changed elsewhere. Check the latest, then try again.";
-export type RegisteredAgentType = Contribution<AgentType>;
+export type RegisteredAgentType = Contribution<HostedAgentType>;
 export type RetypePreview = Readonly<{
   /** Destination settings after applying the target type's migration policy. */
   config: unknown;
@@ -1870,7 +1906,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.executions = createAgentExecutions(ctx, executionStorage(storage));
-    this.contributions = createContributions<AgentType>(ctx);
+    this.contributions = createContributions<HostedAgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
     this.attentionControls = createContributions<{ id: string }>(ctx);
@@ -2391,7 +2427,9 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "A hosted agent type has provision, activate, profile and remove, and no run, models or timeoutMs",
       );
+    const voice = (type as unknown as AgentType).voice;
     const models = type.models;
+    const pluginId = this.ctx.pluginOwner?.id;
     this.contributions.register(this.ctx, {
       ...type,
       ...(models && {
@@ -2400,7 +2438,13 @@ export class AgentsService extends Service implements Agents {
           return models(agent);
         },
       }),
-    } as unknown as AgentType);
+      ...(voice
+        ? {
+            voice: (seat: AgentVoicePipe) =>
+              this.runners.openVoice(seat, voice, pluginId),
+          }
+        : {}),
+    } as unknown as HostedAgentType);
   }
   types = () => this.contributions.snapshot();
   registerTab(tab: AgentAddedTab) {

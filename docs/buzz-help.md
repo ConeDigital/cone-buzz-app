@@ -15,6 +15,25 @@ Keep a first explanation brief: Solo, Team, agents, and one useful next step.
 Offer more detail when asked. Do not pretend to highlight controls or navigate
 the interface unless an available tool actually supports that action.
 
+## Agents in Huddles
+
+On supported desktop hosts, a running local agent with voice support joins your
+connected Huddle when it is also a member of that Huddle's room. Membership of
+the parent conversation alone is insufficient. Several agents can participate.
+Your own active agents show “listening to you” in the Huddle. Remote participants
+see no listening badge: the agent’s own client enforces who it hears, and other
+clients cannot verify that. Each filters for audio from your connected devices
+and speaks to everyone. The current audio protocol can briefly misattribute delayed
+audio when a connection slot is reused; this is not a strict privacy guarantee.
+Other people or speakers near your microphones can also be heard. Simultaneous
+audio from your devices is mixed together.
+Voice work uses the same permissions as your text requests. Joining on another
+device does not seat an agent running here. Leaving closes its voice connection.
+If agent voice stops, the compact player and Huddle window show the reason;
+leave and rejoin to retry.
+Final voice transcripts appear in the room with speaker credit and do not
+mention anyone. Explicit agent watches on that room can still receive them.
+
 ## Identity and getting connected
 
 - Buzz uses a key-based identity. On first launch, the welcome screen offers

@@ -9,6 +9,8 @@ import type { ProtectionAction } from "../agent-protection/service";
 import type {
   Agent,
   AgentAttention,
+  AgentVoicePipe,
+  AgentType,
   AgentHandle,
   AgentCreationInput,
   AgentUpdateInput,
@@ -781,6 +783,58 @@ export class AgentRunners {
       { text: unframed(text), root },
     ]);
     return true;
+  }
+  private assertProtected(
+    agent: Agent,
+    type: RegisteredAgentType,
+    handle: AgentHandle,
+  ) {
+    if (!agent.protection) return;
+    if (!type.protection || !handle.protection)
+      throw new Error(
+        type.protectionUnavailable ??
+          "This runtime does not support the agent's protection policy",
+      );
+    handle.protection.assertAvailable();
+  }
+  /** Resolve voice exactly as a text launch; the owning plugin retains its handle. */
+  async openVoice(
+    seat: AgentVoicePipe,
+    voice: NonNullable<AgentType["voice"]>,
+    pluginId?: string,
+  ) {
+    const agent = this.host.ready(seat.agent.key);
+    const handle = agent && this.handle(agent.key, pluginId);
+    const type = this.runners.get(seat.agent.key)?.type;
+    if (!agent || !handle || !type)
+      throw new Error("This agent is no longer running");
+    // Huddle seats close on protectionRevision changes, so this gate is reapplied.
+    this.assertProtected(agent, type, handle);
+    const start = await this.host.start(agent);
+    if (!start.ok) throw new Error(start.reason);
+    const team = this.host.team(agent.key);
+    seat.signal.throwIfAborted();
+    const ownerName = this.host.displayName(agent, agent.owner) ?? agent.owner;
+    return voice({
+      ...seat,
+      agent,
+      config: start.config,
+      revisions: start.revisions,
+      ...(start.synced && { synced: start.synced }),
+      ...(team && { team }),
+      async transcript(speaker, text) {
+        if (seat.signal.aborted || !text.trim()) return;
+        const name = speaker === "owner" ? ownerName : agent.name;
+        await handle.publish(
+          {
+            kind: 9,
+            content: `${name} (transcribed by ${agent.name}): ${text}`,
+            tags: [["h", seat.conversation.channelId]],
+          },
+          () => seat.signal.throwIfAborted(),
+        );
+      },
+    });
   }
   /** The agent's handle outside any run, while this copy runs it with a
    * type of `pluginId` when specified, not changing it, and its community is live. Each
@@ -2519,14 +2573,7 @@ export class AgentRunners {
       return run(delivery);
     };
     const completion = Promise.resolve().then(async () => {
-      if (agent.protection) {
-        if (!type.protection || !handle.protection)
-          throw new Error(
-            type.protectionUnavailable ??
-              "This runtime does not support the agent's protection policy",
-          );
-        handle.protection.assertAvailable();
-      }
+      this.assertProtected(agent, type, handle);
       const pick = await pickFor(job.trigger, agent, type);
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
