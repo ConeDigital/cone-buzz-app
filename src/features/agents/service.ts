@@ -434,8 +434,11 @@ export type AgentWake = Readonly<{
   text: string;
 }>;
 /** The conversation a self-handoff came from: no channel for a watch's or
- * timer's standalone turn. */
-export type HandoffSource = Readonly<{ channel?: string; root?: string }>;
+ * timer's standalone turn. `external` for an external app acting as the
+ * agent, which has no conversation of its own. */
+export type HandoffSource = Readonly<
+  { channel?: string; root?: string } | { external: true }
+>;
 /** A wake the agent sends itself, `from` another of its conversations. */
 export type AgentHandoff = AgentWake & Readonly<{ from: HandoffSource }>;
 /** The agent as `run` holds it. A run's handle works for as long as the
@@ -886,6 +889,15 @@ export type AgentType<Config = unknown> = {
    * `turn.signal` aborts. With it, the host runs watches and timers as
    * standalone turns in their Interest's lane, and `run` gets only mentions. */
   runOnce?(turn: StandaloneTurn<Config>): Promise<TurnResult>;
+  /** Reads a file for an unprotected agent outside its turns, as its tools
+   * read one they send: relative to its saved workspace, where it runs.
+   * Rejects where only a conversation's session has a place to read it, as
+   * on an execution target. Without it, its agents read none there. */
+  readFile?(
+    agent: Agent<Config>,
+    path: string,
+    signal: AbortSignal,
+  ): Promise<Uint8Array>;
   /** Per-run deadline in milliseconds, up to 30 minutes; defaults to 60 seconds. */
   timeoutMs?: number;
   /** Its turns run in this page, so closing or reloading the app stops them.
@@ -1226,7 +1238,7 @@ export type Agents = {
     agent: AgentKey,
     signal: AbortSignal,
     connected: () => void,
-    scopes?: readonly ExternalScope[],
+    scopes: readonly ExternalScope[],
   ): Promise<HostMcpServer>;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
@@ -2792,16 +2804,27 @@ export class AgentsService extends Service implements Agents {
     key: AgentKey,
     signal: AbortSignal,
     connected: () => void,
-    scopes: readonly ExternalScope[] = ["read", "post"],
+    scopes: readonly ExternalScope[],
   ) {
     if (this.ctx.pluginOwner?.id !== "buzz.agents")
       throw new Error("Authorize external apps in Buzz.");
     const host = this.ctx.host;
     if (!host?.serveMcp)
       throw new Error("External connections require Buzz desktop.");
-    const handle = this.runners.handle(key);
-    if (!handle)
+    // A run's handle: the app acts as the agent itself, with its settings,
+    // plugin requests and handoff, not as a plugin acting through it. Its
+    // wakes say they came from the app, not from the agent's conversations.
+    const run = this.runners.handle(key, undefined, true);
+    if (!run)
       throw new Error("This agent is not running in this copy of Buzz.");
+    const { handoff } = run;
+    const handle: AgentHandle = {
+      ...run,
+      ...(handoff && {
+        handoff: ({ from: _, ...wake }: AgentHandoff) =>
+          handoff({ ...wake, from: { external: true } }),
+      }),
+    };
     if (handle.protection)
       throw new Error("Protected agents cannot use external connections.");
     const relay = this.relay(key);
@@ -2869,60 +2892,28 @@ export class AgentsService extends Service implements Agents {
             check,
             relayAuthor: source.relayAuthor?.(),
             signingAuthority: source.workflowAuthority(),
-            read: async () => {
-              throw new Error("External connections cannot read files.");
+            // Where the agent's type reads them outside its turns, if it can.
+            read: async (path) => {
+              const current = this.agent(key);
+              const read =
+                current &&
+                !current.protection &&
+                this.types().find((type) => type.key === current.type)
+                  ?.readFile;
+              if (!read) throw new Error(`This agent cannot read ${path}`);
+              const bytes = await read(current, path, signal);
+              if (this.agent(key)?.protection)
+                throw new Error(
+                  "Protected agents cannot use external connections.",
+                );
+              return bytes;
             },
-            memories: async () => {
-              throw new Error("External connections cannot read memory.");
-            },
+            memories: (slug) => source.memoryListing(signal, slug),
           });
           return (message) => {
             check();
-            return respondExternal(
-              client,
-              message,
-              connected,
-              scopes,
-              async () => {
-                check();
-                if (!session.mainAgent)
-                  throw new Error(
-                    "Your saved Bestie is unavailable in this copy of Buzz.",
-                  );
-                let worker: string | null | undefined;
-                try {
-                  worker = await session.mainAgent.read();
-                } catch {
-                  check();
-                  throw new Error(
-                    "Your saved Bestie could not be read. Check the community connection and try again.",
-                  );
-                }
-                check();
-                if (!worker || !/^[0-9a-f]{64}$/.test(worker))
-                  throw new Error(
-                    "Choose and save a Bestie in Buzz, then try again.",
-                  );
-                const unavailable =
-                  "Your saved Bestie could not be checked. Check the community connection and try again.";
-                try {
-                  await session.agentChoices.refresh(true, { fresh: true });
-                } catch {
-                  check();
-                  throw new Error(unavailable);
-                }
-                check();
-                const choices = session.agentChoices.snapshot();
-                if (
-                  !choices.selectable.some((agent) => agent.pubkey === worker)
-                )
-                  throw new Error(
-                    choices.complete
-                      ? "Your saved Bestie is not available in this community. Choose another in Buzz, then try again."
-                      : unavailable,
-                  );
-                return worker;
-              },
+            return respondExternal(client, message, connected, scopes, () =>
+              this.addedTools.snapshot(),
             );
           };
         },
