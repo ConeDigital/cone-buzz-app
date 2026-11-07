@@ -71,6 +71,7 @@ mod reshow;
 
 mod notifications;
 mod os_idle;
+mod plugin_url;
 mod repositories_folder;
 mod window_controls;
 mod window_state;
@@ -478,6 +479,31 @@ async fn plugin_import_git(
     .await
 }
 
+#[tauri::command]
+async fn plugin_import_url(
+    imports: tauri::State<'_, Imports>,
+    url: String,
+    sha256: String,
+) -> Result<Option<Preview>, String> {
+    let download = plugin_url::download(url.clone());
+    import_url(imports.inner().clone(), url, sha256, download).await
+}
+
+// Downloads while holding the import slot, as a Git clone does, so a review the
+// user closed can't finish later and replace a newer import's preview.
+async fn import_url(
+    imports: Imports,
+    url: String,
+    sha256: String,
+    download: impl std::future::Future<Output = Result<Vec<u8>, String>> + Send + 'static,
+) -> Result<Option<Preview>, String> {
+    prepare_import(imports, move || {
+        let bytes = tauri::async_runtime::block_on(download)?;
+        buzzodz_plugins::imports::prepare_url(&url, &sha256, bytes).map(Some)
+    })
+    .await
+}
+
 /// Admits a Git import's response; only a refused Add clears the preview it stored.
 async fn admit_git_result(
     fi: &federated_identity::FederatedIdentity,
@@ -743,6 +769,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_update_check,
         plugin_update_preview,
         plugin_import_git,
+        plugin_import_url,
         plugin_import_install,
         plugin_import_discard,
         plugin_catalog,
@@ -1284,6 +1311,37 @@ fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn a_url_download_holds_the_import_slot_until_it_settles() {
+        let imports = super::Imports::default();
+        let (release, gate) = tokio::sync::oneshot::channel::<Vec<u8>>();
+        let first = tokio::spawn(super::import_url(
+            imports.clone(),
+            "https://plugins.example.org/a.json".into(),
+            "ab".repeat(32),
+            async move { gate.await.map_err(|e| e.to_string()) },
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while imports.0.try_lock().is_ok() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the download never took the import slot");
+        let second = super::prepare_import(imports.clone(), || Ok(None)).await;
+        assert_eq!(
+            second.err().as_deref(),
+            Some("Another import is in progress")
+        );
+        release.send(b"{}".to_vec()).unwrap();
+        assert!(first.await.unwrap().is_err());
+        assert!(imports.0.lock().unwrap().is_none());
+        assert!(super::prepare_import(imports, || Ok(None))
+            .await
+            .unwrap()
+            .is_none());
+    }
+
     /// Tauri refuses a registered command its app manifest does not list, so
     /// every handler must be in `build.rs` and allowed by a capability.
     #[test]
