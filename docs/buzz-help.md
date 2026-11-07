@@ -731,6 +731,13 @@ available rather than silently discarding it.
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
   and keyring sign-ins can't run them.
+- **Settings → Agent details** says where an agent's configuration lives:
+  **Synced in** its community, or **Only on this Mac** with why (the relay
+  doesn't sync agent settings, or the first copy failed and Buzz will try
+  again). Hosted agents show no line. Editing a team shows the same line for
+  the team. Teams made before teams synced move to their agents' community
+  automatically once it syncs teams; a team whose agents are in different
+  communities stays on this Mac.
 - Each Claude agent running on this computer keeps its own `claude` process for
   each active conversation. While an unprotected one runs here, Buzz also keeps
   one shared process ready for the next new conversation. Each of these starts
