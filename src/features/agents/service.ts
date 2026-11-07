@@ -1082,7 +1082,11 @@ export type RetypePreview = Readonly<{
 /** A proposal's picture: uploads it once the proposal is valid, giving its
  * HTTPS image URL. */
 export type ProposedPicture = () => Promise<string>;
-type AgentCreation = Readonly<{ type: string; name: string }>;
+type AgentCreation = Readonly<{
+  type: string;
+  name: string;
+  instructions?: string;
+}>;
 /** A requested agent. */
 export type AgentCreationInput = AgentCreation &
   Readonly<{ picture?: ProposedPicture }>;
@@ -2235,6 +2239,8 @@ export class AgentsService extends Service implements Agents {
           if (!kind) throw new Error("That agent type is not available");
           if (kind.remote)
             throw new Error("A hosted agent's key stays with its provider");
+          if (input.instructions && !kind.adopt)
+            throw new Error(`${kind.title} agents have no instructions to set`);
           if (this.pendingRequests() >= 16)
             throw new Error("Review the pending agent requests first");
           return {
@@ -2245,6 +2251,7 @@ export class AgentsService extends Service implements Agents {
             community: binding.origin,
             type: input.type,
             name: input.name.trim(),
+            ...(input.instructions && { instructions: input.instructions }),
             ...(picture && { picture }),
           };
         };
