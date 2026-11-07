@@ -203,6 +203,14 @@ revokes all of them, and a pairing unused for 30 days expires.
 
 ## Conversations and communities
 
+- In dialogs, a ring shows which button has keyboard focus, including when the
+  dialog opens after a click. Enter or Space activates that button; Tab moves
+  focus. The filled action button can be different from the focused button.
+  Simple confirmations generally focus Cancel or the equivalent safe dismissal
+  action, so Enter cancels. Some intentionally focus their primary action.
+  Confirmations with a required field or checkbox start at the relevant control;
+  the action stays gated until its requirements are met.
+
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds
