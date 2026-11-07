@@ -76,6 +76,7 @@ function recipe(name, ...args) {
       path.join(directory, "pnpm"),
       `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.BUZZ_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
 if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("VIEWER:" + JSON.stringify(process.env.BUZZ_DEV_VIEWER));
+if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("RELEASE_KEY:" + JSON.stringify(process.env.BUZZ_DEV_RELEASE_KEY ?? null));
 if (process.argv[2] === "tauri") console.log("ENV:" + JSON.stringify({ fi: process.env.BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG, other: process.env.LOCAL_ONLY_SECRET, updater: process.env.BUZZ_UPDATER_ENDPOINT }));
 \n`,
       { mode: 0o755 },
@@ -117,6 +118,7 @@ if (process.argv[2] === "tauri") console.log("ENV:" + JSON.stringify({ fi: proce
           BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG: undefined,
           LOCAL_ONLY_SECRET: undefined,
           BUZZ_UPDATER_ENDPOINT: undefined,
+          BUZZ_DEV_RELEASE_KEY: undefined,
           ...settings.env,
         },
         encoding: "utf8",
@@ -567,6 +569,32 @@ for (const [name, settings, expected] of [
     );
   });
 }
+
+// Only `just desktop me` reads the release key: never `.env.local` or the
+// shell, since `.env.local` is copied into agents' worktrees.
+for (const [name, args, settings, expected] of [
+  ["me", ["me"], {}, "1"],
+  ["me with options", ["me", "--port", "1430"], {}, "1"],
+  ["plain", [], {}, null],
+  ["from .env.local", [], { local: "BUZZ_DEV_RELEASE_KEY=1\n" }, null],
+  ["from the shell", [], { env: { BUZZ_DEV_RELEASE_KEY: "1" } }, null],
+]) {
+  test(`desktop reads the release key only for me: ${name}`, () => {
+    const result = recipe("desktop", settings, ...args);
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(
+      result.stdout.includes(`RELEASE_KEY:${JSON.stringify(expected)}`),
+      result.stdout,
+    );
+  });
+}
+
+test("desktop refuses me after other arguments", () => {
+  const result = recipe("desktop", "--port", "1430", "me");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /just desktop me --port 1430/);
+  assert.ok(!result.stdout.includes("RELEASE_KEY:"), result.stdout);
+});
 
 // `.env.local` is a launch environment source for `BUZZ_` names, so native
 // build inputs such as the FI descriptor can live there.
