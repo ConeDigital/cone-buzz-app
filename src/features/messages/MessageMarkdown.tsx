@@ -22,12 +22,9 @@ import {
   channelForLink,
   channelLinkLabel,
   emptyReferenceDirectory,
+  MentionLabel,
 } from "./ReferenceText";
-import {
-  AtIcon,
-  CopyIcon,
-  RobotIcon,
-} from "../../shared/design-system/icons/index";
+import { CopyIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { profileKey } from "../profiles/target";
@@ -685,7 +682,6 @@ function PreparedMessageMarkdown({
       interactive && typeof target === "string" && !!canOpenLink?.(target);
     if (typeof text === "string" && typeof target === "string") {
       const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
-      const Icon = agent ? RobotIcon : AtIcon;
       const Mention = clickable ? "button" : "span";
       // Selection copy reads the identity and the whole label (selection-copy.ts).
       return (
@@ -706,8 +702,7 @@ function PreparedMessageMarkdown({
               : undefined
           }
         >
-          <Icon aria-hidden="true" className={referenceStyles.icon} />
-          {label}
+          <MentionLabel agent={!!agent} label={label} />
         </Mention>
       );
     }
@@ -722,9 +717,7 @@ function PreparedMessageMarkdown({
         typeof element?.properties["data-profile-target"] === "string" ||
         (element?.tagName === "a" &&
           typeof href === "string" &&
-          !!profileKey(href) &&
-          interactive &&
-          !!canOpenLink?.(href));
+          !!profileKey(href));
       return (
         <p
           {...props}
@@ -746,12 +739,6 @@ function PreparedMessageMarkdown({
           : safeLinkUrl(target));
       if (href && profileKey(href)) {
         const label = labelText(children);
-        if (!interactive || !canOpenLink?.(href))
-          return (
-            <span>
-              {children} ({href})
-            </span>
-          );
         return renderProfile(label.startsWith("@") ? label : `@${label}`, href);
       }
       return href ? (
