@@ -225,7 +225,7 @@ export function createReadState({
       ...Object.entries(own),
       ...Object.entries(frontiers),
     ])
-      if (!key.startsWith("msg:") && value > floor())
+      if (!/^(seen:)?msg:/.test(key) && value > floor())
         next[key] = Math.max(next[key] ?? 0, value);
     return next;
   };
@@ -886,6 +886,9 @@ export function createReadState({
     state: () => state,
     localUnread: (key: string) => journal?.localUnread[key],
     revision: () => journal?.revision ?? 0,
+    /** `revision`, less quiet saves from any window: they change no unread
+     * state, so a reader's entry evidence outlives them. */
+    intentRevision: () => (journal?.revision ?? 0) - (journal?.quiet ?? 0),
     /** Every message at or before this time counts as read: the retention
      * window, or the local floor that dropped marks raised, whichever is
      * later. Publication uses only the retention window. */
@@ -934,7 +937,9 @@ export function createReadState({
       ),
     clearLocalUnread: (key: string, keys: readonly string[], valid: Validity) =>
       mutate(key, undefined, false, valid, keys),
-    /** Atomic explicit subtree read; local-only hosts clear intent without fabricating frontiers. */
+    /** Atomic explicit subtree read; local-only hosts clear intent without
+     * fabricating frontiers. A `quiet` save (a row's `seen:` marks) reads
+     * nothing, so it is counted apart from unread intent (`intentRevision`). */
     readMessages: (
       messages: readonly Readonly<{
         key: string;
@@ -944,6 +949,7 @@ export function createReadState({
       }>[],
       clearForce: string | undefined,
       valid: Validity,
+      quiet = false,
     ) =>
       queue(async () => {
         await ready;
@@ -1003,6 +1009,7 @@ export function createReadState({
               floor: kept.floor,
               own: advanceOwn(current.own, frontiers),
               localUnread,
+              ...(quiet && { quiet: (current.quiet ?? 0) + 1 }),
               acceptedRevision: Object.keys(frontiers).length
                 ? current.acceptedRevision
                 : current.acceptedRevision === current.revision

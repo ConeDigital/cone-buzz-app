@@ -75,6 +75,33 @@ catch-up (including a message taller than the viewport):
 - `thread-activity:<root>` acknowledges replies through the newest reply only in
   that thread. A collapsed newest reply, or one outside the bottom viewport in a
   branch-ordered thread, cannot earn catch-up; visible rows still read individually.
+- `seen:<channel>` quiets the channel's sidebar row, and reads nothing.
+  Opening a channel (`enterChannel`) while the document is visible and focused
+  hides everything in the row, including arrivals during that active visit.
+  Blur or hiding the document freezes the evidence already seen, without writing.
+  Background arrivals remain visible in the row; leaving (`leaveChannel`) saves
+  only the frozen evidence. Visible focus resumes an open visit. Entering in the
+  background sees nothing until focus returns.
+  Ordinary messages go by a timestamp: `seen:<channel>` is the newest retained
+  verified event, so one delivered later with an equal or older timestamp stays
+  quiet in the row (bold only, as with `activity:`). Attention (mentions,
+  broadcasts, DMs, replies in the viewer's conversations) never does: each
+  unread attention message the visit showed gets its own receipt,
+  `seen:msg:<id>`, and any other lights the row, whatever its timestamp.
+  Receipts stay on this device, like `msg:` marks, so another device relights
+  attention rows; the channel cut syncs. The channel snapshot's `row` counts
+  (`observedCount`, `attentionCount`, `threadCount`) leave out what the row
+  has seen. The sidebar row, its floating unread cues, the sidebar
+  **Unreads** filter and the Dock indicator follow `row`. Thread dots,
+  Activity, the channel activity popover, unread-first search, the **New
+  messages** divider, mark-read menus and every `observedCount` keep the
+  unread. Explicit unread intent omits `row`, so the row shows the whole
+  channel again. A leave whose row shows nothing that the saved marks would
+  not already hide writes nothing. These saves, from any window, do not
+  advance `revision()` (the journal counts them apart as `quiet`), so a
+  reader's entry evidence outlives them. A channel read covers the channel
+  mark and reading a message covers its receipt; retention keeps row marks
+  last and never treats them as override ancestry.
 - Both keys use verified event timestamps, never wall time. Neither enters generic
   channel/thread inheritance or remote override baselines. Channel catch-up ends
   a local manual unread on the channel itself; message and thread manual-unread
@@ -441,7 +468,7 @@ Ordinary frontiers are **bounded recent hints, not everlasting read receipts**.
 The sync journal has a 96 KiB serialized-blob budget. Under pressure, up to three
 quarters of that budget keeps channel
 marks (`<channel>`) first, then thread marks (`thread:`), then catch-up marks
-(`activity:`, `thread-activity:`), then message marks: a channel or thread mark covers
+(`activity:`, `thread-activity:`), then message marks, then row marks (`seen:`): a channel or thread mark covers
 many messages, so losing it makes much more old history unread, and recent catch-up
 must never push out a quiet channel's mark. The last quarter, and any room the broad
 marks leave, goes by persisted local interaction order across all marks, so the newest
@@ -478,6 +505,8 @@ A receipt it has no room for raises a local-only `floor` in the same record to t
 receipt's time: on this installation every message at or before the floor is read,
 as with the 30-day retention floor, so dropping a receipt never makes what it read
 unread again. Keeping the newest receipts raises the floor as little as possible.
+Row hints (`seen:`) come after read receipts in both journal and reserve; dropping
+a row hint never raises the floor because it reads nothing.
 Receipts at or below the floor read nothing more and are dropped. Manual unread and
 overrides still win over the floor. Publication keeps only the retention floor. While
 overrides exist, inherited reserve floors stay protected, nothing is dropped for

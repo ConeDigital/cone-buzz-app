@@ -23,7 +23,8 @@ export function markMessage(key: string): string | undefined {
 /** Broader marks first: a channel or thread mark covers many messages, so
  * losing one makes old history unread again. Catch-up marks (`activity:`,
  * `thread-activity:`) come next: only this app reads them, so recent catch-up
- * must never push out a quiet channel's mark. Message marks only cover one. */
+ * must never push out a quiet channel's mark. Message marks only cover one.
+ * Row marks (`seen:`) read nothing, so losing one only relights a row. */
 const scope = (key: string) =>
   !key.includes(":")
     ? 0
@@ -31,7 +32,9 @@ const scope = (key: string) =>
       ? 1
       : key.startsWith("activity:") || key.startsWith("thread-activity:")
         ? 2
-        : 3;
+        : key.startsWith("seen:")
+          ? 4
+          : 3;
 /** Share of the budget that broad marks may fill before recent use decides.
  * The rest always goes to the most recently used marks, so a new read is never
  * dropped just because old channel or thread marks fill the budget. */
@@ -109,10 +112,16 @@ export function retainRead(
   }
   // Encrypted registers do not carry trustworthy ancestry. Preserve every possible
   // inherited channel/thread frontier while any override exists: pruning a parent
-  // could otherwise reactivate a child register. Only frontier-only msg hints are free.
+  // could otherwise reactivate a child register. Only frontier-only msg hints,
+  // and row marks, which no register inherits, are free.
   if (Object.keys(protectedState.overrides).length) {
     for (const [key, value] of frontiers) {
-      if (retained.has(key) || key.startsWith("msg:")) continue;
+      if (
+        retained.has(key) ||
+        key.startsWith("msg:") ||
+        key.startsWith("seen:")
+      )
+        continue;
       if (!take(frontierKey(key), value))
         throw new Error(
           "Read override ancestry capacity reached; saved floors retained",
@@ -122,6 +131,7 @@ export function retainRead(
   }
   const nextRecent: Record<string, number> = { ...recent };
   const byUse = ([a, av]: [string, number], [b, bv]: [string, number]) =>
+    Number(a.startsWith("seen:")) - Number(b.startsWith("seen:")) ||
     (nextRecent[b] ?? 0) - (nextRecent[a] ?? 0) ||
     bv - av ||
     a.localeCompare(b);
@@ -315,22 +325,24 @@ export function retainLocalRead(
     );
   };
   const protectedKey = (key: string) =>
-    overrides.size > 0 && !key.startsWith("msg:");
+    overrides.size > 0 && !key.startsWith("msg:") && !key.startsWith("seen:");
   // Keep inherited floors first (a subset of the already bounded reserve), then
-  // the newest marks, so a drop raises the floor as little as it can.
+  // the newest read marks, so a drop raises the floor as little as it can.
+  // Row hints read nothing: keep them last and never raise the floor for them.
   // Journal recency still controls newly read old history.
   let raised = floor;
   let full = false;
   for (const [key, value] of [...frontiers].sort(
     ([a, av], [b, bv]) =>
       Number(protectedKey(b)) - Number(protectedKey(a)) ||
+      Number(a.startsWith("seen:")) - Number(b.startsWith("seen:")) ||
       bv - av ||
       scope(a) - scope(b) ||
       a.localeCompare(b),
   )) {
     // Once one mark does not fit, every later one is dropped too.
     if (full) {
-      raised = Math.max(raised, value);
+      if (!key.startsWith("seen:")) raised = Math.max(raised, value);
       continue;
     }
     if (redundant(key, value)) continue;
@@ -353,7 +365,7 @@ export function retainLocalRead(
         break;
       }
       full = true;
-      raised = Math.max(raised, value);
+      if (!key.startsWith("seen:")) raised = Math.max(raised, value);
       continue;
     }
     entries.push([key, value]);

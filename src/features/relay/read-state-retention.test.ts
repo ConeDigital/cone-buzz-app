@@ -121,6 +121,58 @@ it("at the synced limit, recent catch-up never pushes out a quiet channel's mark
   for (const key of [...channels, ...threads])
     expect(kept.frontiers[key]).toBe(state.frontiers[key]);
 });
+it("row seen marks go last and are never override ancestry", () => {
+  const seen = Array.from({ length: 300 }, (_, n) => [`seen:room${n}`, 100]);
+  const state = {
+    frontiers: { room: 20, "msg:a": 5, ...Object.fromEntries(seen) },
+    overrides: { "msg:child": { set: 4, clear: 0, baseline: 15 } },
+  };
+  // Ancestry would need every seen mark kept, which cannot fit.
+  const kept = retainReadState([state], {}, "fixture", 512);
+  expect(kept.overrides).toEqual(state.overrides);
+  expect(kept.frontiers.room).toBe(20);
+  expect(kept.frontiers["msg:a"]).toBe(5);
+  const rows = Object.keys(kept.frontiers).filter((key) =>
+    key.startsWith("seen:"),
+  );
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows.length).toBeLessThan(seen.length);
+});
+it("row receipts never crowd out read receipts in the local reserve", () => {
+  const hex = (n: number) => n.toString(16).padStart(64, "0");
+  const marks = (prefix: string, from: number, count: number) =>
+    Object.fromEntries(
+      Array.from({ length: count }, (_, n) => [
+        `${prefix}${hex(from + n)}`,
+        100,
+      ]),
+    );
+  // An override makes inherited floors protected; row receipts are not floors.
+  const before = retainLocalRead(
+    [
+      {
+        frontiers: marks("msg:", 0, 6500),
+        overrides: { room: { set: 1, clear: 0, baseline: 0 } },
+      },
+    ],
+    {},
+    "fixture",
+  );
+  const after = retainLocalRead(
+    [
+      before.state,
+      { frontiers: marks("seen:msg:", 10000, 1000), overrides: {} },
+    ],
+    before.recent,
+    "fixture",
+    before.reserve,
+  );
+  const reads = (kept: typeof before) =>
+    Object.keys({ ...kept.state.frontiers, ...kept.reserve }).filter((key) =>
+      key.startsWith("msg:"),
+    ).length;
+  expect(reads(after)).toBe(reads(before));
+});
 it("old broad marks never crowd out the newest read", () => {
   const hex = (n: number) => n.toString(16).padStart(64, "0");
   const uuid = (n: number) =>
@@ -704,4 +756,32 @@ it("covered marks leave the reserve as well as the journal", () => {
     covered,
   );
   expect(withOverride.reserve).toEqual({ "msg:room.5": 5 });
+});
+
+it("dropping row hints never raises the local read floor or displaces read receipts", () => {
+  const marks = (prefix: string, count: number, value: number) =>
+    Object.fromEntries(
+      Array.from({ length: count }, (_, i) => [
+        `${prefix}${i.toString(16).padStart(64, "0")}`,
+        value,
+      ]),
+    );
+  const before = retainLocalRead(
+    [{ frontiers: marks("msg:", 6000, 10), overrides: {} }],
+    {},
+    "fixture",
+  );
+  const after = retainLocalRead(
+    [before.state, { frontiers: marks("seen:msg:", 7000, 100), overrides: {} }],
+    before.recent,
+    "fixture",
+    before.reserve,
+  );
+  expect(after.floor).toBe(0);
+  const reads = (kept: typeof before) =>
+    Object.keys({
+      ...kept.state.frontiers,
+      ...kept.reserve,
+    }).filter((key) => key.startsWith("msg:")).length;
+  expect(reads(after)).toBe(reads(before));
 });

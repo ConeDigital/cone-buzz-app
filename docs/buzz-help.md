@@ -301,6 +301,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   later. It may also be absent when unread evidence is incomplete, or when read
   intent or the read evidence needed to locate the boundary changes before it is
   established.
+- **Opening a channel or DM** while Buzz is visible and focused clears its sidebar row: the bold name, the mention
+  dot and the thread dot. Switching away from Buzz pauses this: new messages
+  can light the row even while that conversation stays selected. The macOS Dock dot follows the rows. Nothing is marked
+  read: unread threads keep their dots in the conversation and in Activity →
+  Threads, and **New messages** still marks where you left off. A mention, DM or
+  reply to you that arrives after you leave lights the row again, as does any
+  newer message; **Mark as unread** still shows on it. On another device, rows
+  with unread mentions, DMs or replies to you light again until you read them.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and

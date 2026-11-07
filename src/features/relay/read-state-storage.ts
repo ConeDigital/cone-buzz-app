@@ -42,6 +42,9 @@ export type ReadJournal = Readonly<{
   /** Further slots this installation owns after `slot`, in placement order. */
   spill?: readonly string[];
   revision: number;
+  /** Saves among `revision` that read nothing (row `seen:` marks), from any
+   * window, so unread intent is `revision - quiet`. */
+  quiet?: number;
   acceptedRevision: number;
   lastCreatedAt: number;
   pending?: Readonly<{ event: RelayEvent; revision: number }>;
@@ -84,7 +87,11 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
     (raw.revision as number) < 0 ||
     !Number.isSafeInteger(raw.acceptedRevision) ||
     (raw.acceptedRevision as number) < 0 ||
-    (raw.acceptedRevision as number) > (raw.revision as number)
+    (raw.acceptedRevision as number) > (raw.revision as number) ||
+    (raw.quiet !== undefined &&
+      (!Number.isSafeInteger(raw.quiet) ||
+        (raw.quiet as number) < 0 ||
+        (raw.quiet as number) > (raw.revision as number)))
   )
     throw new Error("Invalid saved read state");
   const contexts: Record<string, unknown> = Object.fromEntries(
@@ -232,6 +239,7 @@ export function readJournal(raw: unknown, viewer: string): ReadJournal {
     own: Object.freeze({ ...own }),
     spill: Object.freeze([...(spill as string[])]),
     revision: raw.revision as number,
+    ...(raw.quiet !== undefined && { quiet: raw.quiet as number }),
     acceptedRevision: raw.acceptedRevision as number,
     lastCreatedAt: raw.lastCreatedAt,
     ...(pending ? { pending } : {}),
