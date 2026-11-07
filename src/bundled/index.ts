@@ -3,6 +3,8 @@ import * as mesh from "./mesh-compute";
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
 
+import draftsSentManifest from "./drafts-sent/manifest.json";
+import * as draftsSent from "./drafts-sent";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
@@ -108,6 +110,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...builderlabManifest, apiVersion: 1 },
     module: builderlab,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...draftsSentManifest, apiVersion: 1 },
+    module: draftsSent,
+    // Opt-in until it is ready for everyone.
+    enabledByDefault: false,
   },
   {
     manifest: { ...pairingManifest, apiVersion: 1 },
