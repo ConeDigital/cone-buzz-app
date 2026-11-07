@@ -1526,8 +1526,12 @@ URLs, never file URLs or SVG data.
 The inventory joins exact public keys, not equal names; explicit profile references
 use the publisher's slug mapping only when local definitions do not collide. Local
 names and artwork win for matching keys. A failed source leaves the other source
-visible with a warning. Reads are lazy (once per demand or Refresh), with no polling
-or relay-directory startup scan.
+visible; the mention menu and agent picker report the failure with Retry, and the
+composer shows no standing notice. Reads are lazy (once per demand or Refresh), with
+no polling or relay-directory startup scan. A connection's first establishment
+rereads retained inventory that failed, wholly or partly; a read already in flight
+is reused and reread once if it fails. Each failed source's reason is logged as a
+console warning.
 Relay inventory uses foreground read capacity because Solo needs complete
 inventory to restore its recipients; it keeps the normal ten-second deadline.
 
