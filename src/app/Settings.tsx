@@ -1485,6 +1485,12 @@ export function Settings({
             memberships={client.memberships}
             builderlabIdentity={builderlabIdentity}
             lastActive={lastActive}
+            openBuilderlab={
+              openSection &&
+              contributed.some((card) => card.key === "block.builderlab/login")
+                ? () => openSection("block.builderlab/login")
+                : undefined
+            }
           />
         )}
         {selected === "security" && (
