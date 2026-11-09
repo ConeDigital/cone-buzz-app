@@ -1047,6 +1047,15 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 - The **GitHub** plugin’s pull request panel offers **Queue for merge** when
   the target branch requires a merge queue. After confirmation, it queues the
   displayed commit and shows **Queued for merge**; GitHub controls when it merges.
+- The GitHub pull request panel remembers where you left it for the app
+  session. Opened again in the same channel, it shows the **Summary** or
+  **Changes** view you left there; elsewhere it starts on **Summary**. A review
+  with text that you haven’t submitted waits in **Submit review** wherever that
+  pull request opens, from any channel. Submitting clears it. If the pull
+  request merges or closes first, **Submit review** goes away once you close
+  it. **Changes** and **Submit review** need the desktop app with `gh` signed
+  in. Scroll position isn’t kept, and reloading the window or turning the
+  GitHub plugin off and on forgets all of this.
 - Some desktop plugins can upload images you provide to services they declare.
 - Agents running on this computer can write plugins while the **Plugin
   development** plugin is on (it is by default). It gives them
