@@ -23,8 +23,9 @@ the parent conversation alone is insufficient. Several agents can participate.
 Starting a Huddle in a one-to-one DM with your running voice-capable agent
 adds it to the Huddle room; joining an existing Huddle does not. You can also
 add agents through the Huddle's member controls. On the hosting computer, a
-seated agent shows a smaller avatar, a rotating ring while it works (activity
-dots in the compact player), and its normal size while speaking. This state is
+seated agent starts at normal size, shrinks by 20% while you speak, and shows a
+rotating ring while it works (activity dots in the compact player). It returns
+to normal size while speaking, with the same pulse as people. This state is
 not shared with remote participants. The agent’s own client enforces who it
 hears. Each filters for audio from your connected devices
 and speaks to everyone. The current audio protocol can briefly misattribute delayed
@@ -806,7 +807,8 @@ available rather than silently discarding it.
   sidebar omits the duplicate Bestie row. Bestie uses the same conversation tabs as
   Messages: threads open beside the chat (or in the main pane, following your
   thread placement setting), and can be moved, renamed, or closed. Collapsing
-  the side pane keeps its open threads and reply drafts.
+  the side pane keeps its open threads and reply drafts. Its header includes the
+  same DM controls and actions, including Huddle when supported and enabled.
   A verified existing DM stays available if
   agent discovery fails. If a replacement save fails, the last confirmed Bestie
   remains selected and the confirmation offers another attempt. Being the bestie
