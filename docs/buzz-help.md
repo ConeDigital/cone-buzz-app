@@ -810,6 +810,9 @@ available rather than silently discarding it.
   depend on the type. Do not assume a provider is configured or signed in.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
+  Builderlab permissions are re-read at most once a minute while the app uses
+  them, so a newly granted or removed permission applies without signing in
+  again; a failed check keeps the previous permissions.
   Claude runs with an Anthropic API key pasted under **Anthropic API key**
   there, once for every Claude agent. When creating a Claude agent or editing
   one that runs on this computer, click **Add key** beside **Harness** to open
