@@ -87,10 +87,13 @@ mention anyone. Explicit agent watches on that room can still receive them.
   Choose an available address, then **Create community** joins it right away,
   with no **Join Community** confirmation. Other Builderlab deployments do not
   offer it during setup. Later, **Create community** in **Settings → Plugins →
-  Builderlab** opens the join for the new community at once; after its profile
+  Builderlab → Communities** opens the join for the new community at once; after its profile
   step it opens and is listed in the community picker. When the owner of a community with no channels yet
   opens Messages, Buzz creates one open **#general**, marked as the starter
   channel for new members, and opens it.
+  The picker's **Create community** opens that form directly. If Builderlab is
+  signed out, sign in remains available in both management sections; a picker
+  creation resumes after sign-in.
   Existing community profiles are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore
   its backed-up key where the build and account allow it. If the older Buzz app
   was used on this computer, a **Continue with your Buzz identity?** dialog
@@ -120,6 +123,31 @@ mention anyone. Explicit agent watches on that room can still receive them.
   Backup and restore options depend on the build and account; do not promise
   recovery or assume automatic backup is on. Losing every copy of the private
   key can mean losing the identity.
+- **Settings → Plugins → Builderlab** shows previews of your hosted communities
+  and remote agents. Open either card to manage it, then use the left caret beside the title to return. Both lists load when the overview opens and refresh
+  when the window regains focus; opening a section preserves its current draft.
+  Hosted communities have Active/Archived filters, name/address search and row
+  menus for copying addresses and available management actions. **Create**
+  opens the address form; quota and identity checks still govern creation.
+  After **Copy address**, a hint appears above the row’s **…** menu without moving
+  the list; Escape dismisses it. The **Refresh** icon beside search checks
+  communities again, including after a failed read. Automatic
+  refresh keeps the current list usable and waits while a community dialog is open.
+  A green check beside Refresh means the Builderlab account is linked to this
+  device’s Buzz identity; hover or focus it for details. The creation dialog
+  focuses the address field and shows quota usage beside its actions. Archived
+  communities still count toward quota until deletion cleanup finishes.
+  Remote agents show their model and setup state.
+  The title includes the count. Each row’s **…** menu offers **Copy key**.
+  Saved agents show their community avatar and open their **Agents** pane when
+  clicked, with **View Agent** also available in the menu. **In Agents** marks
+  these available panes. **Configured** means Builderlab reports Active with a valid
+  model selection; it does not indicate live presence.
+  Creation dates and full keys are not displayed in this compact list.
+  Load errors include **Try again**.
+  Use **Open Agents** from the empty list to create one.
+  In builds using a shared sign-in, Builderlab's account notice names the provider;
+  **Manage account** opens Identity, where that sign-in is managed.
 - Some organization builds ask you to sign in to your organization when Buzz
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.
