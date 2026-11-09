@@ -23,7 +23,7 @@ import type { AccountActionsService } from "../../features/account-actions/servi
 import type { Communities } from "../../features/communities/service";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
-import type { InviteLink } from "../../features/communities/invite-link";
+import type { JoinRequest } from "../../features/communities/invite-intent";
 import type { OpenTarget } from "../../features/navigation/targets";
 import {
   CommunityPicker,
@@ -101,7 +101,7 @@ function AppShellContent({
   workspaceRef?: Ref<HTMLDivElement>;
   sidebar?: (pages: ReactNode, creationAction: ReactNode) => ReactNode;
   communities: Communities;
-  invite?: (InviteLink & { requestId: number }) | undefined;
+  invite?: (JoinRequest & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: SettingsCards | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
