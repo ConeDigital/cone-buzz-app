@@ -151,6 +151,11 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
   more than one community.
+- Community owners and admins invite people with **Invite members** in the
+  community's **Membership** settings (also reached from **Invite to community**
+  in the community picker's right-click menu). The dialog creates an invite
+  link with an expiry and use limit to copy, or adds someone directly by npub.
+  The desktop app also shows that link as a QR code to scan with a phone.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.
