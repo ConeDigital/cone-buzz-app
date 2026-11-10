@@ -1,4 +1,7 @@
 import { federatedFixture } from "../federated-identity/testing";
+import { workingAgentDetails } from "../../bundled/channels/working-agents";
+import { completionTarget } from "../notifications/agent-completions";
+import { parseOpenTarget } from "../navigation/targets";
 import { createNativeSession } from "../../bundled/builderlab/session";
 import { offerBuilderlabDecisions } from "../../bundled/builderlab/decisions";
 import { followUpQueue } from "../messages/follow-up-queue";
@@ -1645,6 +1648,93 @@ describe("a plugin's wake", () => {
     JSON.stringify(
       await Promise.all(native.publish.mock.results.map(({ value }) => value)),
     );
+
+  it.each([undefined, "solo", "dm"] as const)(
+    "reports work for a plugin wake in a %s conversation",
+    async (channelType) => {
+      const f = await setup();
+      const list = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) =>
+          row.id === channel && channelType ? { ...row, channelType } : row,
+        ),
+      });
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await held(f.native);
+      let finish!: (outcome: WorkOutcome) => void;
+      const turn = new Promise<WorkOutcome>((resolve) => {
+        finish = resolve;
+      });
+      f.run.mockImplementationOnce(({ acknowledged, workingUntil }) => {
+        acknowledged?.();
+        workingUntil(turn);
+      });
+      f.plugin.agents.wake(bot, {
+        channel,
+        root,
+        text: "Read the task request",
+      });
+      try {
+        await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+        expect(f.activity.reader.work()[0]).toMatchObject({
+          agent: bot,
+          channelId: channel,
+          threadRootId: root,
+          state: "working",
+          ...(channelType === "solo" ? { soloChat: true } : {}),
+        });
+        expect(f.activity.reader.work()[0]?.thread).toBe(
+          channelType ? undefined : true,
+        );
+        const work = f.activity.reader.work()[0] as LocalWork;
+        const target = completionTarget(work, {
+          viewer,
+          communityOrigin: "https://buzz.example",
+        });
+        expect(target).toEqual({
+          version: 1,
+          kind: "conversation",
+          scope: { viewer, communityOrigin: "https://buzz.example" },
+          channelId: channel,
+          ...(channelType ? {} : { threadRootId: root, messageId: root }),
+        });
+        expect(parseOpenTarget(target)).toEqual(target);
+        expect(
+          workingAgentDetails(
+            {
+              status: "listening",
+              records: [],
+              turns: [],
+              typing: [],
+              trimmed: 0,
+              local: f.activity.reader.work(),
+            },
+            channel,
+            bot,
+          )?.messageId,
+        ).toBe(channelType ? undefined : root);
+        finish({ ok: false, error: "Provider unavailable" });
+        await vi.waitFor(() =>
+          expect(f.activity.reader.work()[0]?.state).toBe("error"),
+        );
+        f.activity.reader.retry?.(f.activity.reader.work()[0] as LocalWork);
+        await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+        expect(f.run.mock.calls[1]?.[0].trigger).toMatchObject({
+          type: "plugin",
+          channel,
+          root,
+          text: "Read the task request",
+        });
+        await vi.waitFor(() =>
+          expect(f.activity.reader.work()[0]?.state).toBe("done"),
+        );
+      } finally {
+        finish({ ok: true });
+        await f.ctx.fiber.dispose();
+      }
+    },
+  );
 
   it("runs like a mention in its thread, typing at the thread's root", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
