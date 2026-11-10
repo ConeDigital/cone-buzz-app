@@ -228,6 +228,40 @@ install that release, then promote a newer one and check that the installed app
 updates on each platform. The preview feed's residual risks apply unchanged,
 including unbound signature versions.
 
+### Website installer manifest
+
+After the stable feed is replaced and read back, the same approved job publishes
+`downloads.json` to the dedicated `download-feed` data branch, so the website
+offers the release installed stable apps receive. Previews and betas never
+change it. Its public URL is:
+
+`https://raw.githubusercontent.com/block/buzz-app/download-feed/downloads.json`
+
+Schema version 1 contains `channel: "stable"`, `version`, `release` and a
+`downloads` map with `macos-arm64`, `macos-x64`, `windows-x64`, `linux-appimage`
+and `linux-deb` URLs. Mac entries are DMG installers, not updater archives.
+All five exact, nonempty assets of the published, non-prerelease release must
+exist before the manifest changes. Publication follows `stable-feed/latest.json`,
+rejects rollback and altered same-version metadata, uses an atomic file update,
+and verifies read-back. The first stable promotion creates an orphan branch
+containing only the manifest; until then the URL returns 404. Keep that branch
+writable by release Actions; no personal token or Pages setup is required.
+Raw-file CDN updates can take about five minutes to become visible.
+
+Manifest generation for the promoted stable release can be checked without
+writing anything:
+
+```sh
+GH_REPO=block/buzz-app bin/node scripts/publish-desktop-downloads.mjs 1.0.0
+```
+
+For recovery, a release operator can run the same command with `--apply` for the
+currently promoted stable version. Stable releases are never pruned, so the
+advertised installers stay available. Website clients should use bounded caching
+and fall back to the releases page if metadata cannot be read or validated. This
+manifest selects installer links; it is not an updater signature or desktop
+acceptance record.
+
 ### Stable release setup
 
 A repository admin sets these up once, before the first stable tag:
