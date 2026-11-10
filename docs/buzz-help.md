@@ -1075,9 +1075,18 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   Save unfinished forms and stop active plugin workers before you update.
   **Later** hides the notice for this candidate until the next app run. The
   update stays in the profile menu under **Plugins**. A newer candidate can show
-  a notice again. Failed checks offer **Retry**. If the updated plugin cannot
-  start, use **Retry activation** or its recovery menu to **Roll back**, when
-  available. Checks, review, Later, and cancellation keep plugin work running.
+  a notice again. A check that fails shows no notice; the plugin keeps
+  working. Its row in Manage plugins says **Couldn’t check for
+  updates.** with **Check again**, and Git’s own text under **Details**. Buzz
+  skips background checks while offline and checks again when the connection
+  returns, including a check that failed because the connection dropped.
+  **Check again** clears the row while it checks; if the check fails again,
+  the row shows the failure again. When Git couldn’t find the repository, or
+  asked for a sign-in Buzz couldn’t provide, the row adds a sentence saying so.
+  **Check again** stays available, since access can be restored.
+  If the updated plugin cannot start, use **Retry activation** or its recovery
+  menu to **Roll back**, when available. Checks, review, Later, and
+  cancellation keep plugin work running.
 - A `buzz://plugin-install` Git link pinned to both a commit and a folder can
   update a plugin installed from that same repository and folder: it opens an
   **Update** review showing access changes and any change to the branch or tag
