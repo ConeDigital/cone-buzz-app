@@ -2055,6 +2055,7 @@ it("keeps Community admin hidden after applying a verified ordinary-member roste
       session: {
         relayAuthor,
         read: () => roster,
+        subscribeLive: () => () => {},
         profiles: { ensure: vi.fn(async () => {}) },
       },
     }),
