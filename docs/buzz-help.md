@@ -1013,14 +1013,15 @@ available rather than silently discarding it.
   its speaker. Thread work appears inside its thread; the channel’s reply summary
   still shows when an agent is working there. While the activity under your
   message shows an agent working, it is that agent's only working indicator.
+  Once its recorded updates show that work, they carry the dots instead, until
+  a newer message arrives below them.
   Otherwise dots remain at the end of the conversation while agents work,
   alongside current step details when available. With Reduce Motion enabled,
   the dots stay still. For one agent, click the live activity bubble to open
   its activity; hover or focus the bubble to reveal **Stop** (always visible on
   touch screens). For several agents, open or hover the bubble to choose an
   agent’s activity or stop an individual request. Expand recorded work for its
-  activity controls. The live indicator
-  keeps its controls while recorded updates are visible. Stop availability
+  activity controls. Stop availability
   depends on the agent type.
 - Agent-to-agent messages stay in the conversation as collapsed history after
   work finishes or you reopen a thread. Expand them to read dispatches, handoffs,

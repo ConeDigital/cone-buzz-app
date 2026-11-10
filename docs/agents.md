@@ -1368,15 +1368,19 @@ tasks unknown.
 
 ### Activity updates in the conversation
 
-When no live activity bubble on the triggering message shows an agent, the live
-conversation indicator remains visible while it works, even when recorded
-activity is collapsed or expanded. While that bubble shows, it is the agent's
-working indicator and the conversation adds no second one; the conversation cue
-returns once recorded history owns the work. The indicator keeps dots beside
-current tool labels; reduced motion leaves the dots static. Activity text may
-shimmer too, but does not replace that persistent working cue.
-When local request evidence is available, old activity does not inherit the
-working/thinking state of a different request in the same thread.
+An agent's work has one working indicator. While a live activity bubble on the
+triggering message shows the agent, that bubble is its indicator. Once mounted
+recorded history presents the request's work, that history is its indicator:
+dots in the collapsed summary, or on the active update when expanded, beside the
+shimmering text. The conversation indicator adds no second one, but it stays
+visible for any request of that agent here that nothing mounted presents, and
+returns when that history unmounts or is closed, or once a newer message follows
+it. History that is mounted but scrolled out of view still counts, as the live
+bubble does. A bubble showing only a settled outcome, such as an error, does not
+count. Reduced motion leaves the dots static.
+When local work or a remote turn's triggering IDs identify the request, old
+activity does not inherit the working/thinking state of a different request in
+the same thread. Only work with no known request falls back to the thread.
 
 Agent-to-agent coordination messages remain in the conversation as collapsed,
 expandable history, including after completion, stopping, steering, or reload.
@@ -1386,14 +1390,19 @@ its messages in their original order; exact message links open the matching grou
 
 Live work is separate from this history. Explicit immediate reply IDs and activity
 message IDs select request lifecycle evidence; a nearby human message or shared
-thread root is not proof of a turn. Finishing a request retires its live treatment,
+thread root is not proof of a turn. Thread replies flatten to the thread root, so an
+update binds first to the request whose local run published it, then to a signed
+`["buzz:request", <id>]` tag naming a loaded human request in the same channel
+and thread (or that thread's root), at any reply level. The `send` and `reply_in_subthread` tools add
+that tag from their `request` argument, the turn's triggering message. That
+request, not the reply link, then decides which live work the update shows.
+Untagged or unverifiable updates keep their reply link. Finishing a request retires its live treatment,
 not its messages. When lifecycle evidence is missing, a related public reply can
 retire the old live treatment without claiming that execution completed. Current
 work continues to appear in the conversation indicator.
 
 A public reply alone does not replace the request's live indicator. Mounted
-update history can own the current step and request controls while the live
-conversation indicator remains available. When public replies
+update history can own the current step, its working dots and request controls. When public replies
 split one request's updates into several runs, only the latest run for each agent
 owns its live shimmer and Stop control; earlier runs remain readable history.
 Other agents and requests retain their own live presentation.

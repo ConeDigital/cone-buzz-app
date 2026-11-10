@@ -464,6 +464,32 @@ it("tags a message for agents, and needs the audience said", async () => {
   expect(published).toHaveLength(1);
 });
 
+it("signs the turn's triggering request separately from the flattened reply", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  const request = "f".repeat(64);
+  await callTool(client, context, "send", {
+    text: "Checking",
+    audience: "agents",
+    request: request.toUpperCase(),
+  });
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "reply"],
+    ["audience", "agents"],
+    ["buzz:request", request],
+  ]);
+  for (const bad of ["", "nope", 7])
+    await expect(
+      callTool(client, context, "send", {
+        text: "hi",
+        audience: "agents",
+        request: bad,
+      }),
+    ).rejects.toThrow("Not an event id");
+  expect(published).toHaveLength(1);
+});
+
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };
@@ -4270,11 +4296,12 @@ it.each(["everyone", "agents"])(
   },
 );
 
-it("tags a nested reply for agents only", async () => {
+it("tags a nested reply for agents only, signing its request", async () => {
   const { client, published } = fake(community);
   await callTool(client, { channel: "chan", root }, "reply_in_subthread", {
     parent: nested,
     audience: "agents",
+    request: "f".repeat(64),
     text: "a",
   });
   expect(published[0]?.tags).toEqual([
@@ -4282,6 +4309,7 @@ it("tags a nested reply for agents only", async () => {
     ["e", root, "", "root"],
     ["e", nested, "", "reply"],
     ["audience", "agents"],
+    ["buzz:request", "f".repeat(64)],
   ]);
 });
 
