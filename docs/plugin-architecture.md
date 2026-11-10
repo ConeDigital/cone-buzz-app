@@ -971,9 +971,9 @@ contracts with their own layout and local navigation.
 
 ### Bundled defaults
 
-**Channels is the only required bundled plugin.** Bestie,
-Todos, Usage, Reminders, Workflows and Shared compute are off by default for fresh installs. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
+**Channels is the only required bundled plugin.** Todos, Usage, Reminders,
+Workflows and Shared compute are off by default for fresh installs. Bestie,
+Feedback, Diff viewer, Identity Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
@@ -988,9 +988,10 @@ Both storage owners persist resolved bundled states. Native default snapshots
 are best effort: a failed write keeps the readable catalog usable and is retried
 on the next read; explicit edits and resets still report write failures.
 Existing profiles without saved Reminders or Workflows choices retain
-their former On state; fresh profiles start both Off. Reopening preserves either
-result, and an explicit reset uses current defaults. Future default-off changes
-must follow [the fresh-install decision](plugin-defaults.md), including legacy
+their former On state; fresh profiles start both Off. Bestie starts On for fresh
+profiles; existing profiles without a saved choice retain its former Off state.
+Reopening preserves these results, and an explicit reset uses current defaults.
+Future default changes must follow [the fresh-install decision](plugin-defaults.md), including legacy
 backfills for releases without saved states.
 Default-on does not promise platform support: Terminal contributes UI
 only on macOS/Linux desktop; Builderlab's hosted communities need either the desktop app or
