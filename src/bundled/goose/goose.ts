@@ -92,11 +92,11 @@ export const GOOSE: AcpHooks = {
         },
         () => true,
       ),
-  newSessionMeta: (buzz, { title, provider, platform }) => ({
+  newSessionMeta: (buzz, { title, provider, platform, tags }) => ({
     // The session's whole tool set: goose's developer tools and the Buzz
     // tools, so extensions in the owner's goose config and plugins never load
     // into a Buzz agent. The pinned Goose persists this list, including the
-    // Buzz MCP token; aaif-goose/goose#12908 is not in v1.58.1. Keep the entry
+    // Buzz MCP token; aaif-goose/goose#12908 is not in v1.59.0. Keep the entry
     // until upstream supports client MCP servers alongside this allowlist.
     // The non-persistence acceptance test remains a known failure.
     // Mesh sessions pass a narrower `platform` set (see mesh-compute).
@@ -106,6 +106,8 @@ export const GOOSE: AcpHooks = {
     ...(title ? { sessionTitle: title } : {}),
     // On the provider's default model, whatever goose's config holds.
     ...(provider ? { provider } : {}),
+    // Indexed by goose, so `session/list` finds the session by them.
+    ...(tags ? { tags } : {}),
   }),
   // Appended under goose's own prompt, which carries each extension's
   // instructions. `set` replaces that prompt and renders the text as a
