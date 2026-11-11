@@ -1126,6 +1126,17 @@ Sign-out also asks the server to end the session, best effort: one `POST` to
 and ignores the result, so sign-out never waits for it and works offline. It
 ends only the session this copy held, never one read back from the secure
 store. Sign out of Buzz, expiry and refusals end nothing at the server.
+An explicit sign-out of a server (Settings' **Sign out**, **Switch account**,
+first run's **Use a different account**) also marks that server: its next
+sign-in sends `prompt=login` whatever the caller asks: it asks the sign-in
+provider to authenticate again instead of finishing on the browser's session as
+the account just signed out. The provider decides what the browser shows, and
+the browser's session there is not ended. The mark is a file beside the server's
+FI records (`<account>.signed-out`), so it survives a restart, and only a
+completed browser sign-in or renewal removes it. A session restored from another
+copy takes the mark as the file has it: that session may have been checked
+before another copy's sign-out, so it never erases the mark. Expiry, refusals
+and close never set it, so renewing the same account stays one click. Sign out of Buzz leaves an existing mark in place.
 
 The browser callback shows that sign-in was received and attempts to close after
 three seconds. After verified session installation, macOS can return focus to
