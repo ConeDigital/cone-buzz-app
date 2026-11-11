@@ -48,6 +48,15 @@ unmount, disposal, and registration. It accepts at most 16 KiB. A failed or stal
 write returns false and does not update the memory value. Sources must keep their
 own accepted state unchanged when a write fails.
 
+`openDraft` opens the host's New chat editor for the region, optionally in a
+workspace, with its own draft, files, model, and effort. Send works like an
+ordinary New chat: the create goes out unguarded with the region label before
+the first message, so the Outbox retries both after a restart. A source's
+`draftAgent` narrows the agents the draft may address. Send is refused while the
+source is not running and ready. Before the create, the host saves on this
+device how the chat started; `started` returns it to that region's source until
+`forget`. Sources reconcile their own records from it by channel ID.
+
 Host reveal listeners receive live intent only. A pending request is kept only
 for a late source subscriber and ends when navigation leaves or the connection
 changes. The header chip can explicitly reveal the same current chat after a
