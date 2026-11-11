@@ -2539,6 +2539,21 @@ with an open action stays mounted while it scrolls out of view. Icon, component
 and marker failures each render nothing and leave the row and menu usable. The
 bundled Reminders plugin is the first consumer.
 
+`registerIdentityMark({ id, title, component })` adds presentation right after a
+person's name in the bundled @mention suggestions, such as an identity check that
+tells a person apart from a lookalike while choosing whom to mention. Other
+completion providers, group and channel suggestions, and message bylines get none.
+`component` receives `{ pubkey, profiles }`, where `profiles` is the session's
+shared profile directory. A directory entry's `verified` carries community
+verification when the community provides it, so a mark can read
+`profiles.snapshot().get(pubkey)?.verified` and subscribe to the directory to
+follow it. Marks decide for themselves whether to draw anything: return `null`
+for people they do not mark. The host owns the row, focus and selection; marks
+are presentation only and get no opener. Each mark renders in its own boundary,
+so a failing mark renders nothing and leaves the suggestion usable. Marks draw
+in registration order. A mark's text is part of the suggestion's name, so keep
+it to an icon with an accessible label.
+
 `placement: "toolbar"` puts the action in the host's message toolbar. The
 toolbar appears on hover and keyboard focus. The host supplies an icon button
 with the action title and icon. Activation mounts the same component as a menu
