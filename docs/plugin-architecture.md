@@ -2584,7 +2584,8 @@ pinch, Ctrl/⌘-scroll, drag, double-click and keyboard and offers Copy code.
 Invalid source shows Pele's error with the source.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
-methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` components, plus `.Tabs` while a plugin provides it. Generated
+methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` /
+`.ReplyBranch` / `.ReplySummary` components, plus `.Tabs` while a plugin provides it. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
@@ -2599,6 +2600,28 @@ the host's day dividers re-render at local midnight; a plugin that shows these
 labels in its own long-lived view must call them again when the day changes.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
+
+For a page-owned retained reader, `conversation.ui.ReplyBranch` groups the
+page's own root message and child rows with the native expand/collapse controls
+and focus recovery; `conversation.ui.ReplySummary` formats caller-supplied reply
+counts, participants, activity, unread and draft indicators. `ReplyBranch` takes
+`message`, `layout`, `summary`, accessible `label` and `collapseLabel`,
+`hasReplies`, controlled `open` and `depth`, `onExpand`, `onCollapse`, and
+`children`. Match `layout` to the supplied message: `"thread"` for a normal
+thread row or `"continuation"` for a continuing message run. `ReplySummary` takes
+`count`, `participants`, `resolveName`, and `media`; profiles, agent identities, activity, unread and draft presentation
+are optional. The caller owns rows and reply-tree construction, expansion,
+loading and failure state, drafts, reply targets, IME, stable-reading behavior,
+and read acknowledgements. These components do not read relay state or change
+those policies; compose them around the caller's rows instead of replacing its
+reader. Per-reply connector hooks belong to the native thread list and are not
+provided for caller-owned child rows.
+Put `data-message-id` on each message row to use the native expand/collapse
+focus handoff. Expansion sets the first revealed row's `tabIndex` to `-1`
+before focusing it, provided the row is rendered when `open` changes. Callers
+loading rows asynchronously must render them before opening or manage focus for
+their loading and retry feedback themselves. Supply accessible action labels
+that include the summary's visible text, such as "View 1 reply".
 
 `conversation.ui.Thread({ session, scope, channelId, channelName, messageId })`
 renders the existing `ThreadPanel` without its side-panel header, close control
