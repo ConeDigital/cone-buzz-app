@@ -6199,9 +6199,7 @@ it.each([
 it("a restore that fails for a reason a retry may clear offers Try again, and Back returns to Welcome back", async () => {
   const wait = vi
     .fn()
-    .mockRejectedValueOnce(
-      "Try again, or enter your private key if you have a copy.",
-    )
+    .mockRejectedValueOnce("Restore was canceled. Try again.")
     .mockImplementationOnce(() => new Promise(() => {}));
   const account = backedUpAccount({
     nsec_restore_begin: () => ({ attempt: "attempt-1" }),
@@ -6212,8 +6210,9 @@ it("a restore that fails for a reason a retry may clear offers Try again, and Ba
   const user = userEvent.setup();
   await welcomeBackPage(user, identity, account);
   await restoreLinkedKey(user);
+  // The welcome-back screen names native's cause, not generic advice.
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Try again, or enter your private key if you have a copy.",
+    "Restore was canceled. Try again. Or enter your private key if you have a copy.",
   );
   expect(storedSecurely()).toBeNull();
   expect(
@@ -7430,8 +7429,9 @@ it("copies without revealing and cancels a pending export on blur before clipboa
   const identity = createIdentity();
   await identity.ready;
   const user = userEvent.setup();
-  // The macOS app copies through the host clipboard.
-  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  // On every platform the app copies a key through the host clipboard,
+  // which clears it after a minute if it still holds the key.
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   const writes = () =>
     vi
       .mocked(invoke)
@@ -7439,7 +7439,9 @@ it("copies without revealing and cancels a pending export on blur before clipboa
   vi.mocked(invoke).mockResolvedValueOnce(key);
   render(<PrivateKey identity={identity} />);
   await user.click(screen.getByRole("button", { name: "Copy private key" }));
-  expect(writes()).toEqual([["clipboard_write_text", { text: key }]]);
+  expect(writes()).toEqual([
+    ["clipboard_write_text", { text: key, clearAfterSecs: 60 }],
+  ]);
   expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
     "••••••••••••••••",
   );
@@ -8445,8 +8447,9 @@ const anotherKeyOnDevice = (
       return { seq: 1, pass: 0, builderlab: true, status: "idle" };
     if (command === "nsec_backup_confirmed") return confirmed;
     if (command === "sign_out") return signedOut();
-    // Replace's copy of a device key with no backup.
+    // Replace's copy of a device key with no backup, through the host clipboard.
     if (command === "identity_export") return key;
+    if (command === "clipboard_write_text") return undefined;
     throw new Error(`Unexpected command ${command}`);
   });
 const AFTER_RESTART = "buzz.sign-in-after-restart.v1";
@@ -8649,7 +8652,12 @@ it("Replace waits until a device key with no backup is copied and the user has i
   expect(await replaceDialog()).toHaveTextContent(MAYBE_NOT_BACKED_UP);
   expect(replaceKeyButton()).toBeDisabled();
   await copyDeviceKey(user);
-  expect(await navigator.clipboard.readText()).toBe(key);
+  // The host writes the key and clears it after a minute.
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "clipboard_write_text"),
+  ).toEqual([["clipboard_write_text", { text: key, clearAfterSecs: 60 }]]);
   expect(signOuts()).toEqual([]);
   await user.click(screen.getByRole("button", { name: "Replace" }));
   await waitFor(() =>

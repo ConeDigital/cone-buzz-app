@@ -271,6 +271,11 @@ throughout recovery, with a browser sign-in hint while waiting. Failure shows **
 with **Enter my private key**, **I lost my key**, optional **Try again**, then Back.
 Retry is available for transient errors and partially retrieved backups, but not
 for unavailable/refused recovery, a complete empty result or complete mismatch.
+The error names its cause where native knows it: a browser sign-in the user
+declined (`error=access_denied`) is **Restore was canceled**, a browser step that
+timed out says so, and no answer from Builderlab (network, DNS, TLS) is
+**Couldn't reach Builderlab**. Other failures keep **Could not restore your
+identity**.
 Leaving or retrying cancels the native attempt first. Nothing claims the key is
 saved before installation succeeds.
 
@@ -770,8 +775,21 @@ Identity details are separate under **Buzz → Identity**, so they remain availa
 if the community profile cannot load. The full npub and hex public key can be
 copied. The nsec is absent from the rendered field until Reveal; Copy can fetch it without revealing it. Hide, leaving Identity,
 window blur and document hiding retire pending reveals and clear the displayed
-secret. Failed private-key actions report fixed errors. Copy deliberately leaves
-the key on the OS clipboard; the UI warns about that. The one exception is the
+secret. Failed private-key actions report fixed errors. Copy puts the key on the
+OS clipboard through the host (`clipboard_write_text` with `clearAfterSecs`) on
+every platform. The host marks the copy as sensitive, so clipboard managers that honor the hint
+(macOS, KDE and other Linux managers) skip it and Windows keeps it out of
+clipboard history and cloud sync. Buzz can't make every manager honor it. 60 seconds after the latest successful key
+copy it tries to clear the clipboard, if it still holds that key. A copy of the
+same key restarts the wait, and a failed copy leaves the earlier wait in place.
+Failures are ignored, quitting cancels the wait, and another app can still write
+between the read and the clear. On Linux the check reads the clipboard off the
+main thread, because the owner may be Buzz's own GTK loop; a clipboard that
+doesn't answer within 10 seconds is left alone. A read can't be stopped, so it
+compares a SHA-256 fingerprint of the key, never the key, and while one read is
+still waiting later checks leave the clipboard alone. The UI says Buzz tries to clear it. A key the user
+selects and copies from the revealed field is not cleared, unless a Copy
+button wait is still running. The one exception is the
 first-run **Enter your private key** page: the typed, pasted or file-read nsec
 lives only in that page's state, masked until **Reveal private key**, and
 crosses IPC once, on **Continue with this key**, through `identity_import`; leaving the page
