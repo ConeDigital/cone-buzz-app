@@ -755,8 +755,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.
 - **Approving a Builderlab tool app**: the first time a tool app asks for
   approval, Buzz opens the approval page in your default browser, where you
-  are signed in to Builderlab. Approve it there, return to Buzz and click
-  **Reload** to open the app.
+  are signed in to Builderlab. Approve it there and return to Buzz; the app
+  reloads on its own. **Reload** also opens it.
+- **Connecting an account in a Builderlab app**: when an app asks to connect
+  an account such as GitHub or Linear, Buzz opens the Builderlab connections
+  page in your default browser. Connect it there and return to Buzz; the app
+  reloads. Buzz opens one such page by itself until you next click Back,
+  Forward or Reload or use the address bar; if the app asks again, click
+  **Open in browser** in the bar above it.
 - **Drafts & sent** is an optional plugin, off by default. Turn it on in
   **Settings → Plugins**, and it appears in the Messages sidebar. Opening it keeps
   the conversation sidebar available, so you can switch straight back to a chat.
