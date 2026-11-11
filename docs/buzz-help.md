@@ -610,6 +610,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   ⌘/Ctrl+Enter sends. It starts off.
 - If a message can't be sent, **Retry** appears under it right away. If its
   delivery is only unconfirmed, Buzz waits about ten seconds before saying so.
+  To give up on it, choose **Delete message** in its "..." menu for a message
+  that wasn't sent, or **Remove from this device** for an unconfirmed one. Both
+  only stop this device from sending it; an unconfirmed message that did reach
+  the relay stays in the conversation.
 - A plugin can require a recipient for a new conversation. Its default recipient
   also applies to a saved draft with no recipients. Your text and formatting stay.
   A recipient you select takes priority.
