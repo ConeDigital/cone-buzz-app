@@ -394,6 +394,9 @@ type PluginInstaller = {
   getInstallationStatus(
     id: string,
   ): "installed" | "absent" | "unavailable";
+  getInstallationSource?(
+    id: string,
+  ): "git" | "url" | "folder" | "bundled" | "absent" | "unavailable";
   subscribeInstallationStatus(
     id: string,
     listener: (status: "installed" | "absent" | "unavailable") => void,
@@ -564,6 +567,22 @@ stays unknown, and retirement is not evidence of rejection, cancellation,
 installation or activation. It only means no review or operation from that
 lifetime remains, so any new submission goes through the current provider and
 the normal explicit review.
+
+`getInstallationSource` is also optional on older hosts. In a ready catalog it
+returns `absent` only when the manifest ID is missing. For a present plugin,
+`source: "bundled"` takes precedence and returns `bundled`; otherwise, a
+recognized saved `updateSource.repository`, `updateSource.url`, or
+`updateSource.root` returns `git`, `url`, or `folder`, respectively. Before the
+catalog is ready, or when a manifest ID is duplicated or saved source metadata
+is missing, unknown, malformed, or ambiguous, it returns `unavailable`.
+Git metadata follows the native saved-source contract, including SSH usernames
+such as `deploy+ci`, an empty reference (the repository default), and UTF-8
+plugin folder names with spaces. This does not widen `requestInstall` admission.
+The method returns no source location or other saved metadata, and does not
+check for or establish an update.
+Folder metadata is recognized only when its root is an
+absolute path without an embedded NUL and its plugin path is relative without
+parent components; ordinary path names may include spaces or Unicode.
 
 `requestInstall` never installs silently. It opens Settings → Plugins with the Git
 source prefilled and read-only, and the user still chooses **Find**, reviews the
