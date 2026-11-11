@@ -183,7 +183,10 @@ export function SoloDraft({
   source,
   visit,
   region,
+  lead,
 }: {
+  /** This region draft starts its workspace's lead. */
+  lead?: boolean | undefined;
   /** The Solo region whose source opened this draft; its chat gets that label. */
   region?: string | undefined;
   /** The visit presenting this draft, a Back stop only once drafted. */
@@ -452,6 +455,8 @@ export function SoloDraft({
         !writeView(scope, startKey, {
           region,
           ...(project ? { workspace: project } : {}),
+          // Only while it still targets the workspace it leads.
+          ...(lead && project === projectId ? { lead: true } : {}),
         })
       )
         throw new Error(
@@ -750,6 +755,22 @@ export function SoloDraft({
       if (mounted.current) setBusy(false);
     }
   }
+  // The workspace control and `#` in the prompt both choose with this.
+  const chooseProject = (project: string) => {
+    if (project === selectedProject) return;
+    setSelectedProject(project);
+    writeView(scope, `${draftKey}:new-project`, project);
+    const next = {
+      name: draftSettings.name,
+      ttlSeconds: draftSettings.ttlSeconds,
+      ...(draftSettings.lifetimeChosen
+        ? { lifetimeChosen: true as const }
+        : {}),
+      canvas: undefined,
+    };
+    setDraftSettings(next);
+    writeView(scope, `${draftKey}:settings`, next);
+  };
   const composer = (
     <div id="new-chat-prompt" ref={prompt}>
       <MessageComposer
@@ -772,24 +793,15 @@ export function SoloDraft({
             <WorkspaceControl
               session={session}
               value={selectedProject}
-              onChange={(project) => {
-                if (project === selectedProject) return;
-                setSelectedProject(project);
-                writeView(scope, `${draftKey}:new-project`, project);
-                const next = {
-                  name: draftSettings.name,
-                  ttlSeconds: draftSettings.ttlSeconds,
-                  ...(draftSettings.lifetimeChosen
-                    ? { lifetimeChosen: true as const }
-                    : {}),
-                  canvas: undefined,
-                };
-                setDraftSettings(next);
-                writeView(scope, `${draftKey}:settings`, next);
-              }}
+              onChange={chooseProject}
               disabled={busy}
             />
           ) : undefined
+        }
+        workspace={
+          session.soloPreferences && !busy
+            ? { preferences: session.soloPreferences, choose: chooseProject }
+            : undefined
         }
         submission={{
           draftKey: `${draftKey}:new-draft`,

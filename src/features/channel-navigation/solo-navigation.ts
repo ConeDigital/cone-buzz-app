@@ -389,6 +389,16 @@ export class SoloNavigationService extends Service implements SoloNavigation {
       ? { source: region.source, binding }
       : undefined;
   }
+  async openCreatedWorkspace(workspaceId: string): Promise<boolean> {
+    const region = this.value.regions.find((item) => item.source);
+    const source = region?.source;
+    if (!source?.composeWorkspaces || !source.openWorkspace) return false;
+    const binding = this.value.binding;
+    if (!binding || region?.reason)
+      throw new Error("Workspace selection is not ready. Try again.");
+    await source.openWorkspace(binding, workspaceId);
+    return true;
+  }
   retry = (key: string) => {
     if (this.sources().some((source) => source.key === key)) this.bind(true);
   };
@@ -434,7 +444,12 @@ export class SoloNavigationService extends Service implements SoloNavigation {
       )
         return;
       return "workspace" in saved && typeof saved.workspace === "string"
-        ? { workspace: saved.workspace }
+        ? {
+            workspace: saved.workspace,
+            ...("lead" in saved && saved.lead === true
+              ? { lead: true as const }
+              : {}),
+          }
         : {};
     };
     this.contributions.register(this.ctx, { ...source, identity });
@@ -444,10 +459,11 @@ export class SoloNavigationService extends Service implements SoloNavigation {
         current(binding);
         const { workspace } = input;
         if (
-          workspace !== undefined &&
-          (typeof workspace !== "string" ||
-            !workspace ||
-            workspace.length > 256)
+          (workspace !== undefined &&
+            (typeof workspace !== "string" ||
+              !workspace ||
+              workspace.length > 256)) ||
+          (input.lead && !workspace)
         )
           throw new Error("Invalid workspace");
         if (workspace) {
@@ -475,6 +491,7 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           soloDraftTarget(binding.scope, {
             region: label,
             ...(workspace ? { project: workspace } : {}),
+            ...(workspace && input.lead ? { lead: true } : {}),
           }),
         );
       },
