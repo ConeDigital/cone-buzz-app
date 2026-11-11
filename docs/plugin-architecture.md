@@ -909,6 +909,18 @@ activity. The signal is a live object, not part of saved tool arguments or
 session archives. `BuzzClient` from `@buzz/author` declares this property;
 `AddedToolContext` keeps only the conversation destination.
 
+A plugin, bundled or installed, can give standing instructions to the agents
+this copy of the app runs with `ctx.agents.addInstructions({ id, text, when?
+})`. Every turn then ends with a `<plugin-instructions plugin="…">` section for
+each plugin, before the attention note; Mesh agents, which build their own
+prompt, get none. The section names its plugin, and its text cannot open or
+close a section, so a transcript shows which plugin said what. The agent follows
+it below the base prompt and the owner's requests. Each turn carries the
+complete current set, replacing earlier turns', so turning the plugin off or a
+`when(agent)` that stops returning `true` ends them. Write the text yourself and
+keep it short: it is sent with every turn. Context for one turn belongs in a
+note, which the agent reads as data.
+
 The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
 default) gives local agents three tools. `plugin_authoring_guide` returns
 [the authoring guide](plugin-authoring-guide.md), bundled with the app.
