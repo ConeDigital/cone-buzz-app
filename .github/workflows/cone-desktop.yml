@@ -1,17 +1,60 @@
 name: Cone Desktop
 
 # The Cone Desktop on Buzz 1.0 (cone-buzz-infra
-# slices/48-cone-desktop-on-buzz-app.md). Merge 1: every pull request to
-# `cone` and every push to it proves the fork shallow (criterion 2) and the
-# build's configuration exactly cone/build.env. The signed macOS release, the
-# updater and promotion arrive in merge 2, Windows in merge 3; every upstream
-# workflow stays disabled in this fork (cone/README.md).
+# slices/48-cone-desktop-on-buzz-app.md, ADR-340 as amended by ADR-353).
+#
+# Every pull request to `cone` and every push to it proves the fork shallow
+# (criterion 2) and the build's configuration exactly cone/build.env, and runs
+# the release scripts' tests.
+#
+# A tag cone-desktop-vX.Y.Z on `cone` builds Apple silicon and Intel with
+# `just cone-desktop-build`, signs the app and every executable it bundles
+# with Cone's Developer ID (cone/sign-nested.sh for the helpers Tauri leaves
+# unsigned), notarizes and staples the app and the DMG, and publishes both
+# DMGs as a GitHub Release with the updater archive of each, made again from
+# the stapled app and signed with the updater key (cone/updater-archive.sh).
+#
+# A release reaches installed apps only when it is promoted: a
+# workflow_dispatch with `promote` set to its tag verifies the release's
+# archives against cone/updater.pub, writes latest.json and uploads it to the
+# bucket object 2/latest.json behind
+# https://buzz.cone.digital/desktop/2/latest.json. The old app's feed (the
+# bucket root's latest.json, /desktop/latest.json) is never written, and its
+# bytes are compared before and after (criterion 4).
+#
+# Apple can take hours (Slice 29 defect 225), so a release is resumable: each
+# build's state is saved as two artifacts in every run, and when Apple is
+# still working at the deadline the run ends with the command that resumes it
+# (cone/release-advance.sh).
+#
+# Every secret is in the environment cone-release: deployments only from
+# cone-desktop-v* tags, the owner a required reviewer, so each run — a resume
+# too — waits for the owner's approval. A dispatch from a branch is refused
+# there (criterion 3). Every upstream workflow stays disabled in this fork.
 
 on:
   pull_request:
     branches: [cone]
   push:
     branches: [cone]
+    tags:
+      - 'cone-desktop-v*'
+  # Exactly one input per dispatch, on a cone-desktop-v* tag (the environment
+  # refuses a branch): resume_run_id resumes a release, promote publishes one.
+  workflow_dispatch:
+    inputs:
+      resume_run_id:
+        description: Resume — the run of this workflow, on this tag, to resume
+        required: false
+        default: ''
+      promote:
+        description: Promote — the release tag (cone-desktop-vX.Y.Z) installed apps update to
+        required: false
+        default: ''
+
+concurrency:
+  group: cone-desktop-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -19,8 +62,9 @@ permissions:
 jobs:
   shallow:
     name: Shallow fork
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -44,3 +88,483 @@ jobs:
 
       - name: cone-build-env-check
         run: just cone-build-env-check
+
+      # macOS: the scripts drive ditto, hdiutil and codesign (mocked).
+      - name: cone-notarize-test
+        run: just cone-notarize-test
+
+      - name: cone-updater-test
+        run: just cone-updater-test
+
+  dispatch-inputs:
+    name: Dispatch inputs
+    if: github.event_name == 'workflow_dispatch' && ((inputs.resume_run_id == '') == (inputs.promote == ''))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "::error::a dispatch takes exactly one of resume_run_id and promote"
+          exit 1
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: shallow
+    if: >-
+      always() &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cone-desktop-v') && needs.shallow.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && inputs.resume_run_id != '' && inputs.promote == ''))
+    runs-on: macos-latest
+    environment: cone-release
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read # a resume reads the run it resumes and its artifacts
+    strategy:
+      # One target's failure must not cancel the other's notarization; the
+      # release still needs both.
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            lipo: arm64
+            dmg_arch: aarch64
+          - target: x86_64-apple-darwin
+            lipo: x86_64
+            dmg_arch: x64
+    env:
+      TARGET: ${{ matrix.target }}
+      LIPO_ARCH: ${{ matrix.lipo }}
+      DMG_ARCH: ${{ matrix.dmg_arch }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the pinned upstream tag from block/buzz-app
+        run: |
+          set -euo pipefail
+          base="$(tr -d '[:space:]' < cone/UPSTREAM)"
+          [[ "$base" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::cone/UPSTREAM holds '$base', not a stable upstream tag vX.Y.Z"; exit 1; }
+          git fetch --no-tags https://github.com/block/buzz-app.git "+refs/tags/$base:refs/tags/$base"
+
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+
+      - name: cone-shallow-check
+        run: just cone-shallow-check
+
+      - name: Version from the tag, and the tag on cone
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/tags/cone-desktop-v* ]] || { echo "::error::releases build from cone-desktop-v* tags only, not $GITHUB_REF"; exit 1; }
+          VERSION="${GITHUB_REF_NAME#cone-desktop-v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::'$VERSION' is not SemVer"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/cone || { echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on cone"; exit 1; }
+          # Apple's waits end 30 minutes before the job's 360 (verify, upload).
+          {
+            echo "VERSION=$VERSION"
+            echo "STATE=$RUNNER_TEMP/cone-state"
+            echo "CONE_NOTARY_DEADLINE=$(( $(date +%s) + 330 * 60 ))"
+          } >> "$GITHUB_ENV"
+          echo "Cone $VERSION from $GITHUB_SHA"
+
+      # As upstream's desktop-build.yml: Hermit's rustup proxies select the
+      # rust-toolchain.toml release with the runner's (Apple silicon) standard
+      # library only; add the Intel one to that toolchain and keep nested
+      # builds on it.
+      - name: Pinned Rust with the Intel standard library
+        if: matrix.dmg_arch == 'x64' && github.event_name == 'push'
+        run: |
+          version=$(rustc --version | cut -d' ' -f2)
+          rustup toolchain install "$version" --profile minimal --target "$TARGET"
+          echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      # A keychain of this run's own, with a password generated here, so the
+      # helpers, the app and the DMG can be signed after Tauri.
+      - name: Signing keychain and notarization key
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          KEYCHAIN="$RUNNER_TEMP/cone-signing.keychain-db"
+          P12="$RUNNER_TEMP/cone-signing.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12" -P "$APPLE_CERTIFICATE_PASSWORD" -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign
+          rm -f "$P12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          read -r -a existing <<<"$(security list-keychains -d user | tr -d '"' | xargs)"
+          security list-keychains -d user -s "$KEYCHAIN" "${existing[@]}"
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -qF "\"$APPLE_SIGNING_IDENTITY\"" \
+            || { echo "::error::APPLE_SIGNING_IDENTITY is not a valid identity in APPLE_CERTIFICATE"; exit 1; }
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/cone-notary.p8"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/cone-notary.p8" >> "$GITHUB_ENV"
+
+      # Tauri signs Contents/MacOS/Buzz and the bundle with the hardened
+      # runtime and upstream's entitlements; cone/sign-nested.sh (inside the
+      # recipe) then signs the helpers in Contents/Resources and the bundle
+      # again. No notarization here (no APPLE_API_KEY/ISSUER): cone/notarize.sh
+      # does it. TAURI_BUNDLER_DMG_IGNORE_CI lets the DMG's Finder layout run on
+      # the runner. With the updater key Tauri also signs its own
+      # Cone.app.tar.gz: only a proof that the key and password work.
+      - name: Build and sign the app
+        if: github.event_name == 'push'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TAURI_BUNDLER_DMG_IGNORE_CI: 'true'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: just cone-desktop-build "$TARGET" "$VERSION"
+
+      - name: The build as the release's state
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          bundle="target/$TARGET/release/bundle"
+          dmg="Cone_${VERSION}_${DMG_ARCH}.dmg"
+          [[ -s "$bundle/macos/Cone.app.tar.gz.sig" ]] || { echo "::error::Tauri made no updater signature: is the updater key set?"; exit 1; }
+          mkdir -p "$STATE"
+          ditto -c -k --keepParent "$bundle/macos/Cone.app" "$STATE/Cone.zip"
+          cp "$bundle/dmg/$dmg" "$STATE/tauri.dmg"
+          echo "$dmg" > "$STATE/dmg"
+          echo built > "$STATE/stage"
+
+      # Each run saves two checkpoints under their own names, never
+      # overwritten: -1 before Apple's waits, -2 after. A resume takes the
+      # newest one the run has.
+      - name: The run to resume
+        id: source
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.resume_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]] || { echo "::error::resume_run_id '$SOURCE_RUN' is not a run id"; exit 1; }
+          got="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" --jq '[.path, .head_branch, .head_sha] | join(" ")')"
+          want=".github/workflows/cone-desktop.yml $GITHUB_REF_NAME $GITHUB_SHA"
+          [[ "$got" == "$want" ]] || { echo "::error::run $SOURCE_RUN is '$got', not '$want'"; exit 1; }
+          names="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts" --jq '.artifacts[] | select(.expired | not) | .name')"
+          artifact=""
+          for n in 2 1; do
+            if grep -qx "cone-state-$DMG_ARCH-$n" <<<"$names"; then artifact="cone-state-$DMG_ARCH-$n"; break; fi
+          done
+          [[ -n "$artifact" ]] || { echo "::error::run $SOURCE_RUN has no saved state for $DMG_ARCH"; exit 1; }
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+          echo "resuming run $SOURCE_RUN ($GITHUB_REF_NAME at $GITHUB_SHA) from $artifact"
+
+      # The updater archive is signed with upstream's Tauri CLI, which a resume
+      # (no build) has not installed.
+      - name: Node modules for the updater signer
+        if: github.event_name == 'workflow_dispatch'
+        run: pnpm install --frozen-lockfile
+
+      - name: Download the state of the run to resume
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.source.outputs.artifact }}
+          path: ${{ runner.temp }}/cone-state
+          run-id: ${{ inputs.resume_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Save checkpoint 1
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cone-state-${{ matrix.dmg_arch }}-1
+          path: ${{ runner.temp }}/cone-state
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Notarize the app and the DMG, staple both
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -euo pipefail
+          echo "stage: $(cat "$STATE/stage")"
+          rc=0
+          cone/release-advance.sh "$STATE" || rc=$?
+          if (( rc == 3 )); then
+            echo "::error::Apple has not finished; the state is saved. Resume (the owner approves it): gh workflow run cone-desktop.yml -R $GITHUB_REPOSITORY --ref $GITHUB_REF_NAME -f resume_run_id=$GITHUB_RUN_ID"
+          fi
+          exit "$rc"
+
+      - name: Save checkpoint 2
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cone-state-${{ matrix.dmg_arch }}-2
+          path: ${{ runner.temp }}/cone-state
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Unpack the stapled app
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/cone-verify"
+          mkdir -p "$RUNNER_TEMP/cone-verify"
+          ditto -x -k "$STATE/Cone.zip" "$RUNNER_TEMP/cone-verify"
+          echo "APP=$RUNNER_TEMP/cone-verify/Cone.app" >> "$GITHUB_ENV"
+          echo "DMG=$STATE/$(cat "$STATE/dmg")" >> "$GITHUB_ENV"
+
+      - name: Verify the app and the DMG
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          plist="$APP/Contents/Info.plist"
+          for k in CFBundleName CFBundleIdentifier CFBundleShortVersionString; do
+            printf '%s = %s\n' "$k" "$(/usr/libexec/PlistBuddy -c "Print :$k" "$plist")"
+          done
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" == digital.cone.desktop ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" == "$VERSION" ]]
+          codesign --verify --deep --strict -vv "$APP"
+          spctl --assess --type execute -vv "$APP"
+          xcrun stapler validate "$APP"
+          # Upstream's entitlements, as its release checks them.
+          codesign --display --entitlements :- "$APP" > "$RUNNER_TEMP/cone-entitlements.plist" 2>/dev/null
+          for e in com.apple.security.device.audio-input com.apple.security.cs.disable-library-validation; do
+            [[ "$(/usr/libexec/PlistBuddy -c "Print :$e" "$RUNNER_TEMP/cone-entitlements.plist")" == true ]] || { echo "::error::the signed app lacks $e"; exit 1; }
+          done
+          # Every executable it carries: the app's and the helpers upstream
+          # bundles as resources (the buzz CLI, buzz-agent-command, goose-acp).
+          n=0
+          while IFS= read -r -d '' bin; do
+            file -b "$bin" | grep -q '^Mach-O' || continue
+            info="$(codesign -dvv "$bin" 2>&1)"
+            grep -qx "TeamIdentifier=$APPLE_TEAM_ID" <<<"$info" || { echo "::error::$bin: not signed by the team"; exit 1; }
+            grep -q '^CodeDirectory .*flags=.*runtime' <<<"$info" || { echo "::error::$bin: no hardened runtime"; exit 1; }
+            archs="$(lipo -archs "$bin")"
+            [[ "$archs" == "$LIPO_ARCH" ]] || { echo "::error::$bin: $archs, not $LIPO_ARCH"; exit 1; }
+            echo "${bin#"$APP/"}: team, hardened runtime, $archs"
+            n=$((n + 1))
+          done < <(find "$APP/Contents/MacOS" "$APP/Contents/Resources" -type f -print0)
+          (( n >= 4 )) || { echo "::error::$n executables, expected the app and three helpers"; exit 1; }
+          "$APP/Contents/Resources/bin/buzz" --help >/dev/null || { echo "::error::the signed buzz CLI does not run"; exit 1; }
+          # The updater: Cone's key compiled in, Block's feeds not. The key and
+          # the feed's URL come from one config delta, so the key proves the
+          # delta; the URL is looked for where the compiler keeps it as one
+          # literal (the x86_64 build stores it in 8-byte pieces: Slice 29
+          # defect 237).
+          endpoint="$(grep -E '^BUZZ_UPDATER_ENDPOINT=' cone/build.env | cut -d= -f2-)"
+          strings -a "$APP/Contents/MacOS/Buzz" > "$RUNNER_TEMP/cone-strings.txt"
+          grep -qF "$(tr -d '[:space:]' < cone/updater.pub)" "$RUNNER_TEMP/cone-strings.txt" || { echo "::error::cone/updater.pub's key is not in the app"; exit 1; }
+          if [[ "$LIPO_ARCH" == arm64 ]]; then
+            grep -qF "$endpoint" "$RUNNER_TEMP/cone-strings.txt" || { echo "::error::$endpoint is not in the app"; exit 1; }
+            found="$endpoint and "
+          fi
+          ! grep -qE 'github\.com/block/buzz(-app)?/releases' "$RUNNER_TEMP/cone-strings.txt" || { echo "::error::Block's update endpoint is in the app"; exit 1; }
+          echo "updater: ${found:-}cone/updater.pub's key compiled in; no Block endpoint"
+          spctl --assess --type open --context context:primary-signature -vv "$DMG"
+          xcrun stapler validate "$DMG"
+          # What a person gets: the app inside the DMG, stapled, and Finder's
+          # layout (.DS_Store) with cone/'s background.
+          mnt="$RUNNER_TEMP/cone-dmg-check"
+          mkdir -p "$mnt"
+          hdiutil attach "$DMG" -nobrowse -readonly -noautoopen -mountpoint "$mnt" >/dev/null
+          trap 'hdiutil detach "$mnt" >/dev/null || true' EXIT
+          ls -la "$mnt" "$mnt/.background"
+          codesign --verify --deep --strict "$mnt/Cone.app"
+          xcrun stapler validate "$mnt/Cone.app"
+          [[ -s "$mnt/.DS_Store" ]] || { echo "::error::the DMG has no Finder layout (.DS_Store)"; exit 1; }
+          cmp -s "$mnt/.background/$(ls "$mnt/.background")" cone/icons/dmg-background.png \
+            || { echo "::error::the DMG's background is not cone/icons/dmg-background.png"; exit 1; }
+          echo "Finder layout present; background = cone/icons/dmg-background.png"
+          shasum -a 256 "$DMG"
+
+      # Tauri's own archive predates the ticket; this one is the stapled app.
+      - name: The updater archive from the stapled app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          files="$RUNNER_TEMP/cone-release-files"
+          rm -rf "$files"
+          cone/updater-archive.sh "$STATE" "$files" "$VERSION" "$DMG_ARCH"
+          cp "$DMG" "$files/"
+          ls -l "$files"
+          echo "RELEASE_FILES=$files" >> "$GITHUB_ENV"
+
+      - name: Remove the signing keychain and the notarization key
+        if: always()
+        # Fixed paths, not $KEYCHAIN: a setup step that failed after creating
+        # the keychain never wrote it to GITHUB_ENV.
+        run: |
+          keychain="$RUNNER_TEMP/cone-signing.keychain-db"
+          if [[ -e "$keychain" ]]; then security delete-keychain "$keychain" || true; fi
+          rm -f "$RUNNER_TEMP/cone-notary.p8" "$RUNNER_TEMP/cone-signing.p12"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cone-desktop-${{ matrix.dmg_arch }}
+          path: ${{ env.RELEASE_FILES }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/cone-desktop-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: cone-desktop-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#cone-desktop-v}"
+          UPSTREAM="$(tr -d '[:space:]' < cone/UPSTREAM)"
+          for arch in aarch64 x64; do
+            ls "dist/Cone_${VERSION}_${arch}.dmg" "dist/Cone_${VERSION}_${arch}.app.tar.gz" "dist/Cone_${VERSION}_${arch}.app.tar.gz.sig"
+          done
+          (cd dist && sha256sum ./*.dmg ./*.app.tar.gz > SHA256SUMS && cat SHA256SUMS)
+          pre=()
+          if [[ "$VERSION" == *-* ]]; then pre=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/*.app.tar.gz dist/*.app.tar.gz.sig dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag ${pre[@]+"${pre[@]}"} \
+            --title "Cone $VERSION" \
+            --notes "Cone Desktop $VERSION, built from block/buzz-app $UPSTREAM ($GITHUB_SHA). Signed with Cone's Developer ID and notarized by Apple; Apple silicon (aarch64) and Intel (x64), each with its signed updater archive. Installed apps update to it once it is promoted."
+
+  # Publishes a release to installed apps: its archives verified against
+  # cone/updater.pub as an app verifies them, latest.json written, uploaded to
+  # the bucket object 2/latest.json with the bucket-scoped token, and read
+  # back through the feed. The owner approves it like every cone-release run.
+  # One promotion at a time across all tags, and each refuses to move the feed
+  # to an older version than the bucket holds or to write any other object
+  # (cone/promote-check.sh). The old app's feed is read before and after and
+  # must not change by a byte.
+  promote:
+    name: Promote ${{ inputs.promote }}
+    if: github.event_name == 'workflow_dispatch' && inputs.promote != '' && inputs.resume_run_id == ''
+    runs-on: ubuntu-latest
+    environment: cone-release
+    concurrency:
+      group: cone-desktop-feed-2
+      cancel-in-progress: false
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.promote }}
+      FEED_URL: https://buzz.cone.digital/desktop/2/latest.json
+      OLD_FEED_URL: https://buzz.cone.digital/desktop/latest.json
+      FEED_BUCKET: cone-desktop-updates
+      FEED_OBJECT: 2/latest.json
+      RCLONE_IMAGE: rclone/rclone:1.75.1@sha256:45401ad7410db1d67ffdb58e19059ad20b0d8e0285a60e38bbec55cc1019c7a5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The release and its archives, verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^cone-desktop-v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "::error::promote takes a release tag cone-desktop-vX.Y.Z, not '$TAG'"; exit 1; }
+          VERSION="${BASH_REMATCH[1]}"
+          [[ "$VERSION" == 2.* ]] || { echo "::error::$TAG is not on this app's 2.x line"; exit 1; }
+          git merge-base --is-ancestor "$TAG^{commit}" origin/cone || { echo "::error::$TAG is not on cone"; exit 1; }
+          draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          [[ "$draft" == false ]] || { echo "::error::$TAG is a draft"; exit 1; }
+          mkdir -p dist
+          for arch in aarch64 x64; do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+              --pattern "Cone_${VERSION}_${arch}.app.tar.gz" --pattern "Cone_${VERSION}_${arch}.app.tar.gz.sig"
+          done
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist --pattern SHA256SUMS
+          (cd dist && grep -E '\.app\.tar\.gz$' SHA256SUMS | sha256sum -c -)
+          for arch in aarch64 x64; do
+            cone/updater-verify.sh "dist/Cone_${VERSION}_${arch}.app.tar.gz" "dist/Cone_${VERSION}_${arch}.app.tar.gz.sig" cone/updater.pub
+          done
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "UPSTREAM=$(git show "$TAG:cone/UPSTREAM" | tr -d '[:space:]')" >> "$GITHUB_ENV"
+
+      # Tauri's static updater manifest: each platform's signature is the
+      # .sig file's text, its URL the release asset.
+      - name: latest.json
+        run: |
+          set -euo pipefail
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          jq -n --arg v "$VERSION" --arg notes "Cone $VERSION (block/buzz-app $UPSTREAM)" \
+                --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --rawfile sa "dist/Cone_${VERSION}_aarch64.app.tar.gz.sig" \
+                --rawfile sx "dist/Cone_${VERSION}_x64.app.tar.gz.sig" \
+                --arg ua "$url/Cone_${VERSION}_aarch64.app.tar.gz" \
+                --arg ux "$url/Cone_${VERSION}_x64.app.tar.gz" \
+            '{version: $v, notes: $notes, pub_date: $date,
+              platforms: {"darwin-aarch64": {signature: ($sa | rtrimstr("\n")), url: $ua},
+                          "darwin-x86_64":  {signature: ($sx | rtrimstr("\n")), url: $ux}}}' > latest.json
+          jq -e --arg v "$VERSION" '.version == $v and (.platforms | keys) == ["darwin-aarch64", "darwin-x86_64"]
+            and ([.platforms[].signature | length > 0] | all)' latest.json >/dev/null
+          cat latest.json
+
+      - name: Upload to the feed
+        env:
+          CONE_R2_ACCESS_KEY_ID: ${{ secrets.CONE_R2_ACCESS_KEY_ID }}
+          CONE_R2_SECRET_ACCESS_KEY: ${{ secrets.CONE_R2_SECRET_ACCESS_KEY }}
+          CONE_R2_ENDPOINT: ${{ secrets.CONE_R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          old_before="$(curl -fsS "$OLD_FEED_URL" | sha256sum | cut -d' ' -f1)"
+          echo "old app's feed before: $old_before"
+          # The token reaches rclone through a 0600 env file, not the command line.
+          envfile="$RUNNER_TEMP/cone-feed.env"
+          ( umask 077
+            printf 'RCLONE_CONFIG=/dev/null\nRCLONE_CONFIG_FEED_TYPE=s3\nRCLONE_CONFIG_FEED_PROVIDER=Cloudflare\nRCLONE_CONFIG_FEED_NO_CHECK_BUCKET=true\n'
+            printf 'RCLONE_CONFIG_FEED_ENDPOINT=%s\n' "$CONE_R2_ENDPOINT"
+            printf 'RCLONE_CONFIG_FEED_ACCESS_KEY_ID=%s\n' "$CONE_R2_ACCESS_KEY_ID"
+            printf 'RCLONE_CONFIG_FEED_SECRET_ACCESS_KEY=%s\n' "$CONE_R2_SECRET_ACCESS_KEY" ) > "$envfile"
+          trap 'rm -f "$envfile"' EXIT
+          feed_rclone() { docker run --rm --env-file "$envfile" -v "$PWD:/work" -w /work "$RCLONE_IMAGE" "$@"; }
+          # What the object holds now, read from the bucket itself; a listing
+          # or a read that fails stops the promotion.
+          : > previous.json
+          listing="$(feed_rclone lsf "FEED:$FEED_BUCKET/${FEED_OBJECT%/*}/")"
+          if grep -qx "${FEED_OBJECT##*/}" <<<"$listing"; then
+            feed_rclone cat "FEED:$FEED_BUCKET/$FEED_OBJECT" > previous.json
+            echo "feed before: $(sha256sum previous.json | cut -d' ' -f1) (version $(jq -r '.version // "none"' previous.json 2>/dev/null || echo unreadable))"
+          else
+            echo "feed before: no $FEED_OBJECT in the bucket"
+          fi
+          cone/promote-check.sh previous.json "$VERSION" "$FEED_OBJECT"
+          feed_rclone copyto /work/latest.json "FEED:$FEED_BUCKET/$FEED_OBJECT" --header-upload "Cache-Control: no-cache"
+          want="$(sha256sum latest.json | cut -d' ' -f1)"
+          for _ in $(seq 1 12); do
+            got="$(curl -fsS "$FEED_URL" | sha256sum | cut -d' ' -f1 || true)"
+            [[ "$got" == "$want" ]] && break
+            sleep 5
+          done
+          [[ "$got" == "$want" ]] || { echo "::error::$FEED_URL serves $got, not the uploaded $want"; exit 1; }
+          echo "feed after:  $want — Cone $VERSION promoted ($FEED_URL)"
+          old_after="$(curl -fsS "$OLD_FEED_URL" | sha256sum | cut -d' ' -f1)"
+          [[ "$old_after" == "$old_before" ]] || { echo "::error::the old app's feed changed: $old_before → $old_after"; exit 1; }
+          echo "old app's feed after:  $old_after (unchanged)"
