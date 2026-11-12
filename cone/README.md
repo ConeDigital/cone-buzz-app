@@ -20,7 +20,11 @@ The window still says "Buzz": only the bundle is branded (ADR-340 decision 4).
 | `build-env.sh` | refuses a repository-root `.env*`, clears every `BUZZ_*` the build reads or the shell exports, then loads `build.env` |
 | `tauri.cone.conf.json` | the Tauri config delta: name, identifier, icons, `Info.plist`, DMG layout and background |
 | `Info.plist`, `icons/`, `make-assets.py` | the menu-bar name and the microphone usage string; the icons and DMG background, generated from `icons/source.png` |
-| `cone.just` | `cone-desktop-build`, `cone-shallow-check`, `cone-build-env-check` |
+| `cone.just` | `cone-desktop-build`, `cone-shallow-check`, `cone-build-env-check`, `cone-notarize-test`, `cone-updater-test` |
+| `updater.pub` | the updater's public key (minisign `A11AAB7556EB3BE2`, the old app's), compiled into every build with the feed `https://buzz.cone.digital/desktop/2/latest.json` |
+| `sign-nested.sh` | signs the helpers Buzz 1.0 bundles in `Contents/Resources/bin` (Tauri leaves them linker-signed), then the app |
+| `notarize.sh`, `release-advance.sh`, `notarize-test.sh` | notarization (submit; wait through dropped requests; staple), the resumable stages of one architecture's release, and their test against mocks |
+| `updater-archive.sh`, `updater-verify.sh`, `promote-check.sh`, `updater-test.sh`, `test/updater/` | the updater archive from the stapled app; the signature check an app makes; the promotion's refusals (an older version, any object but `2/latest.json`); their test |
 
 ## Build locally (unsigned)
 
@@ -31,7 +35,8 @@ just cone-desktop-build aarch64-apple-darwin            # or x86_64-apple-darwin
 ```
 
 Ad-hoc signed, unstyled DMG (the Finder layout needs an Automation grant on
-a workstation), no updater. Never distribute a local build. The version goes
+a workstation). The updater is built in (Cone's feed and key), so a local
+build offers the newest promoted release. Never distribute a local build. The version goes
 into the build through a `--config` delta outside the tree, as upstream's
 release does; the tree is clean afterwards (the recipe checks).
 
@@ -61,5 +66,37 @@ Re-read the trigger signals and the facts in `cone-buzz-infra`
 
 ## Release
 
-Merge 2 (signing, notarization, the updater, the feed at
-`https://buzz.cone.digital/desktop/2/latest.json`) and merge 3 (Windows).
+1. Merge to `cone` by pull request (`gh pr create -R ConeDigital/cone-buzz-app`:
+   in this fork `gh` may default to `block/buzz-app`).
+2. Tag the merge commit and push the tag:
+   `git tag cone-desktop-v2.Y.Z origin/cone && git push origin cone-desktop-v2.Y.Z`.
+   The line is `2.x` (ADR-340 decision 9); the old app's line ended at `1.1.x`.
+3. The owner approves the run (Actions → the run → *Review deployments* →
+   `cone-release`). Both builds wait for it; no one approves through the API.
+4. The run builds Apple silicon and Intel, signs the app, the helpers Buzz 1.0
+   bundles in `Contents/Resources/bin` (`cone/sign-nested.sh`) and the DMG,
+   notarizes and staples the app and the DMG, verifies them (`codesign`,
+   `spctl`, `stapler`, the entitlements, Team ID, hardened runtime and `lipo`
+   on every executable, `buzz --help`; Cone's feed and key compiled in,
+   Block's feeds absent), makes each updater archive from the stapled app
+   and signs it with the updater key, and creates the GitHub Release with
+   both DMGs, both `.app.tar.gz`, both `.sig` and `SHA256SUMS`.
+5. If Apple is still working when the run's time is up, the run fails with
+   the command that resumes it, and its state is an artifact for 14 days:
+   `gh workflow run cone-desktop.yml -R ConeDigital/cone-buzz-app --ref cone-desktop-v2.Y.Z -f resume_run_id=<run>`.
+   The owner approves the resume like any run; it continues where the run
+   stopped, never rebuilding or resubmitting what Apple already has.
+6. **Promote** — the release reaches installed apps only now:
+   `gh workflow run cone-desktop.yml -R ConeDigital/cone-buzz-app --ref cone-desktop-v2.Y.Z -f promote=cone-desktop-v2.Y.Z`,
+   approved by the owner. It verifies both archives against `cone/updater.pub`
+   and `SHA256SUMS`, writes `latest.json` and uploads it to the object
+   `2/latest.json` in the R2 bucket `cone-desktop-updates`, then reads it back
+   through `https://buzz.cone.digital/desktop/2/latest.json`. It refuses an
+   older version than the object holds and any other object
+   (`cone/promote-check.sh`), and fails if the old app's feed
+   (`/desktop/latest.json`, the bucket root) changed by a byte.
+
+Secrets are in the environment `cone-release` only (deployments from tags
+`cone-desktop-v*`, the owner a required reviewer); their sources are in
+1Password `Cone Buzz Backup Keys`. `cone/updater.pub` is the old app's key
+(minisign `A11AAB7556EB3BE2`): never change it.
