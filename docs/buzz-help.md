@@ -863,6 +863,10 @@ available rather than silently discarding it.
 
 ## Choosing and customizing agents
 
+- An optional plugin can attach context to a native session. Follow-ups and
+  reconnects keep that association. **New** starts another association. Each
+  agent keeps its current conversation, reply placement and session controls.
+
 - Open an agent’s **Memory** tab and expand a memory to read it with Markdown
   formatting, including headings, lists, code, tables, and line breaks. Memory
   images stay as text rather than loading remote content. **Copy full body** in
