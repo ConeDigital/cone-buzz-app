@@ -173,6 +173,9 @@ import {
   type HostCompletionEdit,
 } from "../conversation/completion";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
+import { ComposerAnnotators } from "../conversation/ComposerAnnotators";
+import { AnnotationMenu } from "./AnnotationMenu";
+import type { AnnotationMenuRequest } from "./composer-dom";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
@@ -1456,6 +1459,11 @@ function Composer({
   const completion = useCompletionEditor(
     input,
     active && !editingDisabled && !!outbox?.supports(9),
+  );
+  const [annotationMenu, setAnnotationMenu] = useState<AnnotationMenuRequest>();
+  const closeAnnotationMenu = useCallback(
+    () => setAnnotationMenu(undefined),
+    [],
   );
   function loadSaved(raw: string | null) {
     diagnose("load", revision.current, raw);
@@ -3423,6 +3431,33 @@ function Composer({
             </AddressedAgentsContext.Provider>
           </WorkspaceCompletion.Provider>
         )}
+        {extensions?.annotators && (
+          // Annotators see exactly what completion providers may observe.
+          <ComposerAnnotators
+            registry={extensions.annotators}
+            input={input}
+            enabled={active && !editingDisabled && !!outbox?.supports(9)}
+            epoch={[
+              scope,
+              channelId,
+              threadRootId ?? "",
+              editing.target?.id ?? "",
+            ].join("\n")}
+            session={session}
+            scope={scope}
+            channelId={channelId}
+            threadRootId={threadRootId}
+            inviteAgents={agentChoices && !editing.target}
+          />
+        )}
+        {annotationMenu && (
+          <AnnotationMenu
+            key={`${annotationMenu.revision}:${annotationMenu.mark.start}`}
+            request={annotationMenu}
+            input={input}
+            onClose={closeAnnotationMenu}
+          />
+        )}
         <BackgroundUploadStatus
           session={session}
           focusTarget={input}
@@ -3555,6 +3590,9 @@ function Composer({
               }}
               onFormatsChange={setActiveFormats}
               onEditLink={setLinkEdit}
+              onAnnotationMenu={
+                extensions?.annotators ? setAnnotationMenu : undefined
+              }
               // Pasted identity links notify admitted recipients under their
               // current names; edits never add recipients. Send still asks
               // before adding someone outside the channel.
