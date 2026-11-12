@@ -26,7 +26,11 @@ cone_env_files() { # repository-root env files a reader would load, one per line
   return 0
 }
 
-cone_build_env() { # refuse env files, clear every BUZZ_* variable, then load cone/build.env
+cone_updater_pubkey() { # the updater's public key, as build.rs and Tauri take it
+  tr -d '[:space:]' < cone/updater.pub
+}
+
+cone_build_env() { # refuse env files, clear every BUZZ_* variable, then load cone/build.env and cone/updater.pub
   local files vars v
   files="$(cone_env_files)"
   if [[ -n "$files" ]]; then
@@ -40,4 +44,9 @@ cone_build_env() { # refuse env files, clear every BUZZ_* variable, then load co
   # shellcheck source=cone/build.env
   . cone/build.env
   set +a
+  BUZZ_UPDATER_PUBLIC_KEY="$(cone_updater_pubkey)"
+  # Without either, build.rs leaves the updater out without a word.
+  [[ -n "$BUZZ_UPDATER_PUBLIC_KEY" && -n "${BUZZ_UPDATER_ENDPOINT:-}" ]] \
+    || { echo "cone_build_env: the updater needs cone/updater.pub and BUZZ_UPDATER_ENDPOINT in cone/build.env" >&2; return 1; }
+  export BUZZ_UPDATER_PUBLIC_KEY
 }

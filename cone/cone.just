@@ -43,7 +43,10 @@ cone-build-env-check:
     cone_build_env
     bad=0
     for v in "${planted[@]}"; do
-      if grep -qE "^$v=" cone/build.env; then
+      if [[ "$v" == BUZZ_UPDATER_PUBLIC_KEY ]]; then
+        want="$(tr -d '[:space:]' < cone/updater.pub)"
+        [[ "${!v-}" == "$want" ]] || { echo "cone-build-env-check: $v is '${!v-<unset>}', not cone/updater.pub's key" >&2; bad=1; }
+      elif grep -qE "^$v=" cone/build.env; then
         want="$(grep -E "^$v=" cone/build.env | tail -n 1 | cut -d= -f2-)"
         [[ -n "${!v+x}" && "${!v}" == "$want" ]] || { echo "cone-build-env-check: $v is '${!v-<unset>}', not '$want'" >&2; bad=1; }
       else
@@ -57,13 +60,18 @@ cone-build-env-check:
       echo "cone-build-env-check: a repository-root .env.local did not stop cone_build_env" >&2; bad=1
     fi
     (( bad == 0 )) || exit 1
-    echo "cone-build-env-check: ok (${#planted[@]} names planted, each as cone/build.env sets it or unset; an env file refused)"
+    echo "cone-build-env-check: ok (${#planted[@]} names planted, each as cone/build.env sets it, the updater key as cone/updater.pub holds it, or unset; an env file refused)"
 
-# Build the Cone Desktop for one Apple target, unsigned (ad-hoc), with
-# upstream's pinned toolchain (bin/activate-hermit). `version` goes into the
-# build through a --config delta outside the tree, as upstream's
-# scripts/candidate-version.mjs does; no tracked file is edited. Merge 2 adds
-# the Developer ID, notarization and the updater.
+# Build the Cone Desktop for one Apple target with upstream's pinned toolchain
+# (bin/activate-hermit). `version` and the updater (Cone's key and feed, from
+# cone_build_env) go into the build through a --config delta outside the tree,
+# as upstream's scripts/candidate-version.mjs does; no tracked file is edited.
+# Without a Developer ID in the environment the app is ad-hoc signed (a local
+# build); the release workflow supplies APPLE_SIGNING_IDENTITY and KEYCHAIN,
+# and then cone/sign-nested.sh signs the helpers Tauri leaves unsigned. With
+# the updater key in the environment Tauri also makes and signs its own
+# Cone.app.tar.gz — before notarization, so the release replaces it
+# (cone/updater-archive.sh); here it proves the key and password early.
 cone-desktop-build target="aarch64-apple-darwin" version="2.0.0-local":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -79,15 +87,23 @@ cone-desktop-build target="aarch64-apple-darwin" version="2.0.0-local":
     rustup target add "$TARGET" >/dev/null
     export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
     pnpm install --frozen-lockfile
-    # The second delta: the version, and no updater artifacts (merge 1).
-    delta="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/cone-build.XXXXXX")/tauri.version.conf.json"
-    node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ version: process.argv[2], bundle: { createUpdaterArtifacts: false } }, null, 2) + "\n")' "$delta" "$VERSION"
+    # The second delta: the version and the updater (RFC 7396 replaces any
+    # endpoints array); the same key and endpoint build.rs compiles in.
+    delta="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/cone-build.XXXXXX")/tauri.release.conf.json"
+    artifacts=false
+    [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]] && artifacts=true
+    node -e 'const [file, version, pubkey, endpoint, artifacts] = process.argv.slice(1);
+      require("fs").writeFileSync(file, JSON.stringify({ version, bundle: { createUpdaterArtifacts: artifacts === "true" },
+        plugins: { updater: { pubkey, endpoints: [endpoint] } } }, null, 2) + "\n");' \
+      "$delta" "$VERSION" "$BUZZ_UPDATER_PUBLIC_KEY" "$BUZZ_UPDATER_ENDPOINT" "$artifacts"
+    echo "updater: $BUZZ_UPDATER_ENDPOINT, updater artifacts $artifacts"
     rm -rf "target/$TARGET/release/bundle"
     # CI=true makes Tauri's bundle_dmg.sh skip its Finder AppleScript (the
     # window layout and the background), which needs an Automation grant on a
     # workstation; the release (merge 2) sets TAURI_BUNDLER_DMG_IGNORE_CI=true.
     CI=true pnpm tauri build --ci --bundles app,dmg --target "$TARGET" --config "$PWD/cone/tauri.cone.conf.json" --config "$delta" -- --locked
     bundle="target/$TARGET/release/bundle"
+    if [[ "$APPLE_SIGNING_IDENTITY" != - ]]; then cone/sign-nested.sh "$bundle/macos/Cone.app"; fi
     plist="$bundle/macos/Cone.app/Contents/Info.plist"
     for k in CFBundleName CFBundleDisplayName CFBundleIdentifier CFBundleShortVersionString NSMicrophoneUsageDescription; do
       printf '%s = %s\n' "$k" "$(/usr/libexec/PlistBuddy -c "Print :$k" "$plist" 2>/dev/null || echo '<absent>')"
@@ -96,3 +112,14 @@ cone-desktop-build target="aarch64-apple-darwin" version="2.0.0-local":
     left="$(git status --porcelain --untracked-files=all | sed '/^$/d' || true)"
     [[ -z "$left" ]] || { printf 'cone-desktop-build: the tree is not clean after the build:\n%s\n' "$left" >&2; exit 1; }
     echo "cone-desktop-build: $bundle/macos/Cone.app, tree clean"
+
+# cone/updater-verify.sh and cone/promote-check.sh against throwaway keys'
+# signatures and planted feeds (cone/test/updater).
+cone-updater-test:
+    bash cone/updater-test.sh
+
+# cone/notarize.sh, cone/release-advance.sh and cone/updater-archive.sh
+# against mocks of xcrun, hdiutil and codesign: acceptance, a dropped request
+# and a held copy, refusal, the deadline, a resume at every stage.
+cone-notarize-test:
+    bash cone/notarize-test.sh
