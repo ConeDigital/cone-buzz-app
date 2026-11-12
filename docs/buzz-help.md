@@ -642,6 +642,9 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.
+- **Reminder counts** show how many reminders are due in a small capsule on the
+  app tile's corner. It shows `99+` above 99; its accessible label keeps the
+  exact count.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.
   Open the original message to reveal them.
 - **Reminder notifications** open **Reminders** instead of the message if you
