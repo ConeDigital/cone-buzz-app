@@ -220,7 +220,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
   server asks the browser to sign in again rather than reuse the account it
   remembers, even after Buzz restarts. Signed-out servers keep **Sign in**.
   **Renew sign-in** and the expiry date appear within seven days of expiry;
-  its caret menu offers **Sign out**. A Builderlab connection link opens its
+  its caret menu offers **Sign out**. While you finish renewing in the browser,
+  the card says "Finish in your browser" with **Cancel**; you stay signed in.
+  If Buzz couldn't check a saved sign-in, for example while offline, it keeps
+  it and offers **Check again**. A Builderlab connection link opens its
   existing settings. Removing the Buzz key still ends all server sign-ins.
 - Buzz apps on this computer that use the same organization server, such as
   Buzz and Buzz Staging, share its sign-in, like the private key. After you sign
@@ -513,6 +516,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   - **You don't have access to this community**: when you're signed in through
     the community's server, it names the account it refused and offers
     **Switch account**. **Check again** once an admin has added you.
+  - If the sidebar says the community refused your account, **Try again**
+    asks again, so it works once an admin has fixed your access. Buzz never
+    asks again on its own.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels
   you're in. Opening an unjoined channel shows a preview with **Join**. Private
