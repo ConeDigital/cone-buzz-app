@@ -1404,3 +1404,9 @@ Owning the agent does not grant permission to edit or run its workflow.
 ## Workflows in archived channels
 
 In **Workflows**, an archived channel’s group says **Archived**, as do its workflows under **Recently updated**. Their runs would fail, so **Run now** and turning a workflow on are unavailable, and the editor saves a workflow only while it’s off. You can still turn an enabled workflow off, from its row or the editor, or delete it. **New workflow** doesn’t offer archived channels.
+
+## Draft diagnostics
+
+Desktop builds save a small local trace when a draft conflict or save failure
+occurs. It contains operation metadata, with no draft text or secrets. See
+[draft diagnostics](draft-diagnostics.md) for the file location and collection steps.

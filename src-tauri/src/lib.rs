@@ -25,6 +25,7 @@ mod app_agents;
 mod decisions;
 mod deep_links;
 mod dock;
+mod draft_diagnostics;
 mod huddle_window;
 use huddle_window::{
     huddle_window_action, huddle_window_open, huddle_window_reset_incoming, huddle_window_update,
@@ -748,6 +749,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::socket::relay_socket_start,
         federated_identity::socket::relay_socket_send,
         federated_identity::socket::relay_socket_close,
+        draft_diagnostics::draft_diagnostics_save,
         relay_sign,
         relay_decode_read_state,
         relay_sign_read_state,

@@ -99,6 +99,7 @@
     "allow-file-download",
     "allow-media-copy-image",
     "allow-clipboard-write-text",
+    "allow-draft-diagnostics-save",
     "allow-media-stream-base",
     "allow-get-os-idle-seconds",
     "allow-system-hour-cycle",
