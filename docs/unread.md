@@ -530,9 +530,27 @@ marker tuples or change automatic observation.
 Capture requires initialized read-state storage (`await unread.ensure()` before
 preparation). A failed capture rejects every invocation of that operation rather
 than moving the snapshot to save time; prepare again after readiness/recovery.
-Storage failures retain the cut for retry. Access revoke/regrant, cache clear or
-session disposal invalidate captured intent. The thread operation additionally
-requires its captured message evidence to remain valid.
+Storage failures retain the cut for retry. Access revoke/regrant, cache clear,
+or session disposal invalidate captured intent; leaving the channel invalidates
+only Undo, not the saved read. The thread operation additionally requires its
+captured message evidence to remain valid.
+
+An individual saved explicit-read result may expose an optional `undo` only when
+that action cleared saved local-unread journal markers and cleared no
+forced-message marker or covered overlay. The handle is also withheld if a force
+mark for covered messages is queued while the read saves. Undo restores only the
+local-unread journal markers that exact saved action removed, in a new storage
+transaction; it does not restore overlays or rewind or publish a read frontier.
+The handle is conditional on the exact saved journal revision and the
+operation's access/lifecycle evidence. Its revision guard covers the whole
+journal: any later save that advances the revision, including an unrelated
+marker or quiet read-state save, makes the handle stale; bookkeeping saves that
+leave the revision unchanged do not. This whole-journal expiry is deliberately
+conservative rather than per-target. `markAllChannelsRead()` omits its
+per-channel handles because later saves in the sweep expire earlier ones. The
+thread operation also depends on its captured message evidence. A failed undo
+save can be retried with the same handle; duplicate or stale attempts reject.
+Consumers must tolerate hosts that do not provide `undo`.
 
 ## Explicit clearing matrix
 

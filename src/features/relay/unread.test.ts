@@ -1,6 +1,10 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
-import { CapturedReadWouldWidenError, createReadState } from "./read-state";
+import {
+  CapturedReadWouldWidenError,
+  createReadState,
+  type ReadMutationResult,
+} from "./read-state";
 import { deletionApplies, foldMessages } from "./fold";
 import {
   readJournal,
@@ -2659,6 +2663,8 @@ it("mark all serialises channel reads over listed channels, skips read ones and 
   // A clock behind the evidence leaves each cut at its channel's newest message.
   clock(0);
   const unread = h.session.unread;
+  await unread.markUnreadLocal({ kind: "channel", channelId: "room" });
+  await unread.markUnreadLocal({ kind: "channel", channelId: "other" });
   await unread.ensure();
   const capture = vi.spyOn(h.storage, "capture");
   const results = await unread.markAllChannelsRead();
@@ -2666,6 +2672,7 @@ it("mark all serialises channel reads over listed channels, skips read ones and 
   expect(capture).toHaveBeenCalledTimes(1);
   expect(results).toHaveLength(2);
   expect(results.every((result) => result.durability === "saved")).toBe(true);
+  expect(results.every((result) => result.undo === undefined)).toBe(true);
   // "quiet" had nothing to clear, so it earned neither a frontier nor a write.
   expect(h.journal()?.state.frontiers).toEqual({ room: 11, other: 12 });
 
@@ -5002,6 +5009,785 @@ it.each(
     expect(h.journal()).toEqual(before);
   },
 );
+
+it("undoes only local targets cleared by the saved channel read, not its frontier", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("other");
+  const root = message(h.alice, "room", "root", 11);
+  const reply = message(h.alice, "room", "reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const independent = message(h.alice, "other", "independent", 13);
+  h.emit([root, reply, independent]);
+  const unread = h.session.unread;
+  await unread.markUnreadLocal(h.target);
+  await unread.markUnreadLocal({
+    kind: "message",
+    channelId: "room",
+    messageId: root.id,
+  });
+  await unread.markUnreadLocal({
+    kind: "message",
+    channelId: "room",
+    messageId: reply.id,
+  });
+  await unread.markUnreadLocal({
+    kind: "thread",
+    channelId: "room",
+    rootId: root.id,
+  });
+  await unread.markUnreadLocal({ kind: "channel", channelId: "other" });
+  const before = h.journal();
+  assert(before);
+  clock(20);
+
+  const saved = await unread.prepareChannelRead("room")();
+  expect(saved.undo).toBeTypeOf("function");
+  expect(h.journal()?.localUnread).toEqual({
+    other: before?.localUnread.other,
+  });
+  const frontier = h.journal()?.state.frontiers.room;
+  expect(frontier).toBe(20);
+
+  await saved.undo?.();
+  const restored = h.journal();
+  assert(restored);
+  expect(restored.localUnread).toEqual({
+    other: before.localUnread.other,
+    room: restored.revision,
+    [`msg:${root.id}`]: restored.revision,
+    [`msg:${reply.id}`]: restored.revision,
+    [`thread:${root.id}`]: restored.revision,
+  });
+  expect(restored.state.frontiers.room).toBe(frontier);
+  await expect(saved.undo?.()).rejects.toThrow("Reading observation expired");
+  expect(h.journal()).toEqual(restored);
+  expect(unread.attention("room", root.id).unread).toBe(true);
+  expect(unread.attention("room", reply.id).unread).toBe(true);
+  expect(unread.attention("other", independent.id).unread).toBe(true);
+  const later = message(h.alice, "room", "later arrival", 25);
+  h.emit([later]);
+  expect(unread.attention("room", later.id).unread).toBe(true);
+});
+
+it("undoes a prepared thread read without touching independent markers and survives reload", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  const otherRoot = message(h.alice, "room", "other root", 12);
+  const reply = message(h.alice, "room", "reply", 13, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const otherReply = message(h.alice, "room", "other reply", 14, [
+    ["e", otherRoot.id, "", "reply"],
+  ]);
+  h.emit([root, otherRoot, reply, otherReply]);
+  const unread = h.session.unread;
+  const rootTarget = {
+    kind: "message" as const,
+    channelId: "room",
+    messageId: root.id,
+  };
+  const channelTarget = { kind: "channel" as const, channelId: "room" };
+  const threadTarget = {
+    kind: "thread" as const,
+    channelId: "room",
+    rootId: root.id,
+  };
+  const otherThread = { ...threadTarget, rootId: otherRoot.id };
+  await unread.markUnreadLocal(channelTarget);
+  await unread.markUnreadLocal(rootTarget);
+  await unread.markUnreadLocal(threadTarget);
+  await unread.markUnreadLocal(otherThread);
+  await unread.markUnreadLocal({
+    kind: "message",
+    channelId: "room",
+    messageId: reply.id,
+  });
+  await unread.markUnreadLocal({
+    kind: "message",
+    channelId: "room",
+    messageId: otherReply.id,
+  });
+  const before = h.journal();
+  assert(before);
+
+  const saved = await unread.prepareThreadRead("room", root.id)();
+  expect(saved.undo).toBeTypeOf("function");
+  expect(h.journal()?.localUnread).toEqual({
+    room: before?.localUnread.room,
+    [`msg:${root.id}`]: before?.localUnread[`msg:${root.id}`],
+    [`msg:${otherReply.id}`]: before?.localUnread[`msg:${otherReply.id}`],
+    [`thread:${otherRoot.id}`]: before?.localUnread[`thread:${otherRoot.id}`],
+  });
+  const frontier = h.journal()?.state.frontiers[`msg:${reply.id}`];
+  expect(frontier).toBe(13);
+
+  await saved.undo?.();
+  const restored = h.journal();
+  assert(restored);
+  expect(restored.localUnread).toEqual({
+    ...before.localUnread,
+    [`thread:${root.id}`]: restored.revision,
+    [`msg:${reply.id}`]: restored.revision,
+  });
+  expect(restored.state.frontiers[`msg:${reply.id}`]).toBe(frontier);
+  expect(unread.attention("room", reply.id).unread).toBe(true);
+  expect(unread.attention("room", otherReply.id).unread).toBe(true);
+  await expect(saved.undo?.()).rejects.toThrow("Reading observation expired");
+
+  const reloaded = createReadState({
+    viewer: h.viewer.pubkey,
+    reader: { read: async () => [] },
+    host: undefined,
+    storage: h.storage,
+  });
+  try {
+    await reloaded.ready;
+    expect(reloaded.localUnread(`thread:${root.id}`)).toBeGreaterThan(0);
+    expect(reloaded.localUnread(`msg:${reply.id}`)).toBeGreaterThan(0);
+    expect(reloaded.localUnread(`thread:${otherRoot.id}`)).toBeGreaterThan(0);
+  } finally {
+    reloaded.dispose();
+  }
+});
+
+it("does not offer Undo when a thread read clears a forced reply overlay", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  const reply = message(h.alice, "room", "reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, reply]);
+  const unread = h.session.unread;
+  await unread.ensure();
+  await unread.markMessageUnread("room", reply.id);
+  expect(unread.attention("room", reply.id)).toMatchObject({
+    unread: true,
+    forced: true,
+  });
+  const channelForce = h.journal()?.localUnread["message-force:room"];
+  expect(channelForce).toBeGreaterThan(0);
+
+  const saved = await unread.prepareThreadRead("room", root.id)();
+  expect(unread.attention("room", reply.id).unread).toBe(false);
+  expect(h.journal()?.localUnread["message-force:room"]).toBe(channelForce);
+  expect(unread.attention("room", reply.id)).toMatchObject({
+    unread: false,
+    forced: false,
+  });
+  expect(saved.undo).toBeUndefined();
+});
+
+it("offers Undo for a thread read despite an unrelated forced message overlay", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  const reply = message(h.alice, "room", "reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const otherRoot = message(h.alice, "room", "other root", 13);
+  const otherReply = message(h.alice, "room", "other reply", 14, [
+    ["e", otherRoot.id, "", "reply"],
+  ]);
+  h.emit([root, reply, otherRoot, otherReply]);
+  const unread = h.session.unread;
+  const target = {
+    kind: "thread" as const,
+    channelId: "room",
+    rootId: root.id,
+  };
+  await unread.ensure();
+  await unread.markUnreadLocal(target);
+  await unread.markMessageUnread("room", otherReply.id);
+
+  const saved = await unread.prepareThreadRead("room", root.id)();
+
+  expect(saved.undo).toBeTypeOf("function");
+  expect(unread.attention("room", otherReply.id)).toMatchObject({
+    unread: true,
+    forced: true,
+  });
+  await saved.undo?.();
+  expect(unread.snapshot(target).manual).toBe("local-only");
+  expect(unread.attention("room", otherReply.id)).toMatchObject({
+    unread: true,
+    forced: true,
+  });
+});
+
+it("does not offer Undo when a channel read clears forced message overlays", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  const reply = message(h.alice, "room", "reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, reply]);
+  const unread = h.session.unread;
+  await unread.ensure();
+  await unread.markMessageUnread("room", reply.id);
+  expect(unread.attention("room", reply.id)).toMatchObject({
+    unread: true,
+    forced: true,
+  });
+
+  const saved = await unread.prepareChannelRead("room")();
+  expect(unread.attention("room", reply.id)).toMatchObject({
+    unread: false,
+    forced: false,
+  });
+  expect(saved.undo).toBeUndefined();
+});
+
+it("does not offer Undo for a channel read that clears a retained force marker after leaving", async () => {
+  const h = setup();
+  h.grant("room");
+  const reply = message(h.alice, "room", "reply", 12);
+  h.emit([reply]);
+  const unread = h.session.unread;
+  await unread.ensure();
+  await unread.markMessageUnread("room", reply.id);
+  expect(h.journal()?.localUnread["message-force:room"]).toBeGreaterThan(0);
+
+  unread.leaveChannel("room");
+  expect(unread.attention("room", reply.id).forced).toBe(false);
+  const saved = await unread.prepareChannelRead("room")();
+
+  expect(h.journal()?.localUnread["message-force:room"]).toBeUndefined();
+  expect(saved.undo).toBeUndefined();
+});
+
+it("withholds Undo when the saved transaction clears another window's force marker", async () => {
+  const h = setup();
+  h.grant("room");
+  const reply = message(h.alice, "room", "reply", 12);
+  h.emit([reply]);
+  const unread = h.session.unread;
+  await unread.ensure();
+  await unread.markUnreadLocal({ kind: "channel", channelId: "room" });
+  const second = createReadState({
+    viewer: h.viewer.pubkey,
+    reader: { read: async () => [] },
+    host: undefined,
+    storage: h.storage,
+  });
+
+  try {
+    await second.ready;
+    // A different window can commit a force marker after this instance loaded
+    // its journal. The read still clears it from transaction-current storage.
+    await second.markLocalUnread("message-force:room", () => true);
+    expect(unread.attention("room", reply.id).forced).toBe(false);
+
+    const saved = await unread.prepareChannelRead("room")();
+
+    expect(h.journal()?.localUnread.room).toBeUndefined();
+    expect(h.journal()?.localUnread["message-force:room"]).toBeUndefined();
+    expect(saved.undo).toBeUndefined();
+  } finally {
+    second.dispose();
+  }
+});
+
+it.each([
+  { kind: "channel", withSavedMarker: false },
+  { kind: "channel", withSavedMarker: true },
+  { kind: "thread", withSavedMarker: false },
+  { kind: "thread", withSavedMarker: true },
+] as const)(
+  "withholds Undo when a $kind read clears an overlay after its force marker is removed (saved marker: $withSavedMarker)",
+  async ({ kind, withSavedMarker }) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.alice, "room", "root", 11);
+    const reply = message(h.alice, "room", "reply", 12, [
+      ["e", root.id, "", "reply"],
+    ]);
+    h.emit([root, reply]);
+    const unread = h.session.unread;
+    await unread.ensure();
+    const target =
+      kind === "channel"
+        ? ({ kind: "channel", channelId: "room" } as const)
+        : ({ kind: "thread", channelId: "room", rootId: root.id } as const);
+    if (withSavedMarker) await unread.markUnreadLocal(target);
+    await unread.markMessageUnread("room", reply.id);
+    const second = createReadState({
+      viewer: h.viewer.pubkey,
+      reader: { read: async () => [] },
+      host: undefined,
+      storage: h.storage,
+    });
+
+    try {
+      await second.ready;
+      // The overlay belongs to this visit, but its journal marker can be
+      // cleared by another window before this action clears the overlay.
+      await second.clearLocalUnread(
+        "message-force:room",
+        ["message-force:room"],
+        () => true,
+      );
+      expect(h.journal()?.localUnread["message-force:room"]).toBeUndefined();
+      expect(unread.attention("room", reply.id)).toMatchObject({
+        forced: true,
+      });
+
+      const saved =
+        kind === "channel"
+          ? await unread.prepareChannelRead("room")()
+          : await unread.prepareThreadRead("room", root.id)();
+      expect(saved.undo).toBeUndefined();
+      expect(
+        h.journal()?.localUnread[
+          kind === "channel" ? "room" : `thread:${root.id}`
+        ],
+      ).toBeUndefined();
+      expect(unread.attention("room", reply.id)).toMatchObject({
+        forced: false,
+      });
+    } finally {
+      second.dispose();
+    }
+  },
+);
+
+it.each(["channel", "thread"] as const)(
+  "withholds Undo when a forced message unread is queued during a %s read save",
+  async (kind) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.alice, "room", "root", 11);
+    const reply = message(h.alice, "room", "reply", 12, [
+      ["e", root.id, "", "reply"],
+    ]);
+    h.emit([root, reply]);
+    const unread = h.session.unread;
+    const target =
+      kind === "channel"
+        ? ({ kind, channelId: "room" } as const)
+        : ({ kind, channelId: "room", rootId: root.id } as const);
+    await unread.markUnreadLocal(target);
+
+    const held = h.holdSaveStarted();
+    const reading =
+      kind === "channel"
+        ? unread.prepareChannelRead("room")()
+        : unread.prepareThreadRead("room", root.id)();
+    await held.started;
+    const laterUnread = unread.markMessageUnread("room", reply.id);
+    let laterCompleted = false;
+    void laterUnread.then(
+      () => {
+        laterCompleted = true;
+      },
+      () => {
+        laterCompleted = true;
+      },
+    );
+    await Promise.resolve();
+    expect(laterCompleted).toBe(false);
+
+    try {
+      held.release();
+      const [saved] = await Promise.all([reading, laterUnread]);
+      expect(saved.undo).toBeUndefined();
+      expect(unread.attention("room", reply.id)).toMatchObject({
+        unread: true,
+        forced: true,
+      });
+      expect(h.journal()?.localUnread["message-force:room"]).toBeGreaterThan(0);
+    } finally {
+      held.release();
+    }
+  },
+);
+
+it("keeps a queued channel read's forward clearing behavior when its visit ends", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([message(h.alice, "room", "saved marker", 11)]);
+  const unread = h.session.unread;
+  await unread.markUnreadLocal(h.target);
+
+  const held = h.holdSaveStarted();
+  const reading = unread.prepareChannelRead("room")();
+  await held.started;
+  unread.leaveChannel("room");
+
+  try {
+    held.release();
+    const saved = await reading;
+    expect(h.journal()?.localUnread.room).toBeUndefined();
+    expect(saved.undo).toBeUndefined();
+  } finally {
+    held.release();
+  }
+});
+
+it("expires thread-read undo when its captured reply is deleted", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  const reply = message(h.alice, "room", "reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, reply]);
+  const unread = h.session.unread;
+  const target = {
+    kind: "thread" as const,
+    channelId: "room",
+    rootId: root.id,
+  };
+  await unread.markUnreadLocal(target);
+
+  const saved = await unread.prepareThreadRead("room", root.id)();
+  assert(saved.undo);
+  expect(h.journal()?.localUnread[`thread:${root.id}`]).toBeUndefined();
+
+  h.emit([
+    signed(h.alice, {
+      kind: 5,
+      content: "",
+      tags: [
+        ["h", "room"],
+        ["e", reply.id],
+      ],
+    }),
+  ]);
+  await expect(saved.undo()).rejects.toThrow("Reading observation expired");
+  expect(h.journal()?.localUnread[`thread:${root.id}`]).toBeUndefined();
+});
+
+it("a newer mark followed by clear makes a prepared-read undo handle stale", async () => {
+  const h = setup({}, false);
+  h.grant("room");
+  const unread = h.session.unread;
+  await unread.markUnreadLocal(h.target);
+  const saved = await unread.prepareChannelRead("room")();
+  expect(h.journal()?.localUnread.room).toBeUndefined();
+
+  await unread.markUnreadLocal(h.target);
+  await unread.clearUnreadLocal(h.target);
+  const afterNewIntent = h.journal();
+  await expect(saved.undo?.()).rejects.toThrow("Reading observation expired");
+  expect(h.journal()).toEqual(afterNewIntent);
+  expect(h.journal()?.localUnread.room).toBeUndefined();
+});
+
+it("expires undo when a replacement journal reaches the saved action's revision", async () => {
+  const h = setup({}, false);
+  h.grant("room");
+  const unread = h.session.unread;
+  await unread.markUnreadLocal(h.target);
+  const saved = await unread.prepareChannelRead("room")();
+  assert(saved.undo);
+  const afterRead = h.journal();
+  assert(afterRead);
+
+  await h.storage.update(() => newReadJournal());
+  const second = createReadState({
+    viewer: h.viewer.pubkey,
+    reader: { read: async () => [] },
+    host: undefined,
+    storage: h.storage,
+  });
+  try {
+    await second.ready;
+    await second.markLocalUnread("other", () => true);
+    await second.clearLocalUnread("other", ["other"], () => true);
+    const replacement = h.journal();
+    expect(replacement?.slot).not.toBe(afterRead.slot);
+    expect(replacement?.revision).toBe(afterRead.revision);
+    expect(replacement?.localUnread.room).toBeUndefined();
+
+    await expect(saved.undo()).rejects.toThrow("Reading observation expired");
+    expect(h.journal()).toEqual(replacement);
+  } finally {
+    second.dispose();
+  }
+});
+
+it("restored manual unread is newer than an active reading lease", async () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "marked", 11);
+  h.emit([row]);
+  const unread = h.session.unread;
+  await unread.markUnreadLocal({ kind: "channel", channelId: "room" });
+  const markedAt = h.journal()?.localUnread.room;
+  assert(markedAt);
+  const lease = unread.reading("room");
+
+  const saved = await unread.prepareChannelRead("room")();
+  assert(saved.undo);
+  await saved.undo();
+  const restored = h.journal();
+  assert(restored);
+  expect(restored?.localUnread.room).toBeGreaterThan(markedAt);
+
+  await lease.catchUp(row.id);
+  expect(h.journal()).toEqual(restored);
+  expect(h.journal()?.localUnread.room).toBe(restored.localUnread.room);
+  lease.dispose();
+});
+
+it("conservatively expires prepared-read undo after an unrelated quiet journal save", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("other");
+  const unread = h.session.unread;
+  await unread.markUnreadLocal({ kind: "channel", channelId: "room" });
+  const saved = await unread.prepareChannelRead("room")();
+  assert(saved.undo);
+
+  h.emit([message(h.alice, "other", "seen by the visit", 11)]);
+  await unread.enterChannel("other");
+  const quietRevision = h.journal()?.quiet ?? 0;
+  unread.leaveChannel("other");
+  await vi.waitFor(() => {
+    expect(h.journal()?.quiet).toBe(quietRevision + 1);
+  });
+  const newer = h.journal();
+  await expect(saved.undo()).rejects.toThrow("Reading observation expired");
+  expect(h.journal()).toEqual(newer);
+  expect(h.journal()?.localUnread.room).toBeUndefined();
+});
+
+it.each(["clearCache", "dispose", "leave-channel", "revoke-regrant"] as const)(
+  "a prepared-read undo cannot restore intent after %s",
+  async (change) => {
+    const h = setup({}, false);
+    h.grant("room");
+    const unread = h.session.unread;
+    await unread.markUnreadLocal(h.target);
+    const saved = await unread.prepareChannelRead("room")();
+    const afterRead = h.journal();
+
+    if (change === "revoke-regrant") {
+      h.emit([roster(h.relay, "room", [], 20)]);
+      h.grant("room", 21);
+    } else if (change === "leave-channel") {
+      unread.leaveChannel("room");
+    } else await h[change]();
+    await expect(saved.undo?.()).rejects.toThrow();
+    expect(h.journal()?.localUnread.room).toBeUndefined();
+    if (change !== "clearCache") expect(h.journal()).toEqual(afterRead);
+  },
+);
+
+it.each(["clearCache", "dispose", "leave-channel", "revoke-regrant"] as const)(
+  "a prepared thread-read undo cannot restore intent after %s",
+  async (change) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.alice, "room", "root", 11);
+    const reply = message(h.alice, "room", "reply", 12, [
+      ["e", root.id, "", "reply"],
+    ]);
+    h.emit([root, reply]);
+    const unread = h.session.unread;
+    const key = `thread:${root.id}`;
+    await unread.markUnreadLocal({
+      kind: "thread",
+      channelId: "room",
+      rootId: root.id,
+    });
+    const saved = await unread.prepareThreadRead("room", root.id)();
+    assert(saved.undo);
+    const afterRead = h.journal();
+
+    if (change === "revoke-regrant") {
+      h.emit([roster(h.relay, "room", [], 20)]);
+      h.grant("room", 21);
+    } else if (change === "leave-channel") {
+      unread.leaveChannel("room");
+    } else await h[change]();
+
+    await expect(saved.undo()).rejects.toThrow();
+    expect(h.journal()?.localUnread[key]).toBeUndefined();
+    if (change !== "clearCache") expect(h.journal()).toEqual(afterRead);
+  },
+);
+
+it("checks a thread visit again when queued Undo reaches storage", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  const reply = message(h.alice, "room", "reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, reply]);
+  const unread = h.session.unread;
+  const key = `thread:${root.id}`;
+  await unread.markUnreadLocal({
+    kind: "thread",
+    channelId: "room",
+    rootId: root.id,
+  });
+  const saved = await unread.prepareThreadRead("room", root.id)();
+  assert(saved.undo);
+
+  const held = h.holdSaveStarted();
+  const undoing = saved.undo();
+  try {
+    await held.started;
+    unread.leaveChannel("room");
+    held.release();
+    await expect(undoing).rejects.toThrow("Reading observation expired");
+    expect(h.journal()?.localUnread[key]).toBeUndefined();
+  } finally {
+    held.release();
+  }
+});
+
+it("rejects concurrent attempts to use one thread Undo handle", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  const reply = message(h.alice, "room", "reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, reply]);
+  const unread = h.session.unread;
+  const key = `thread:${root.id}`;
+  await unread.markUnreadLocal({
+    kind: "thread",
+    channelId: "room",
+    rootId: root.id,
+  });
+  const saved = await unread.prepareThreadRead("room", root.id)();
+  assert(saved.undo);
+
+  const held = h.holdSaveStarted();
+  const first = saved.undo();
+  const second = saved.undo();
+  try {
+    await held.started;
+    held.release();
+    await expect(first).resolves.toMatchObject({ durability: "saved" });
+    await expect(second).rejects.toThrow("Reading observation expired");
+    expect(h.journal()?.localUnread[key]).toBeGreaterThan(0);
+  } finally {
+    held.release();
+  }
+});
+
+it("checks a channel visit again when queued Undo reaches storage", async () => {
+  const h = setup({}, false);
+  h.grant("room");
+  const unread = h.session.unread;
+  await unread.markUnreadLocal(h.target);
+  const saved = await unread.prepareChannelRead("room")();
+  assert(saved.undo);
+
+  const held = h.holdSaveStarted();
+  const undoing = saved.undo();
+  await held.started;
+  unread.leaveChannel("room");
+
+  try {
+    held.release();
+    await expect(undoing).rejects.toThrow("Reading observation expired");
+    expect(h.journal()?.localUnread.room).toBeUndefined();
+  } finally {
+    held.release();
+  }
+});
+
+it("checks another window's queued save at the undo transaction boundary", async () => {
+  const h = setup({}, false);
+  h.grant("room");
+  const unread = h.session.unread;
+  await unread.markUnreadLocal(h.target);
+  const saved = await unread.prepareChannelRead("room")();
+  assert(saved.undo);
+  const second = createReadState({
+    viewer: h.viewer.pubkey,
+    reader: { read: async () => [] },
+    host: undefined,
+    storage: h.storage,
+  });
+  try {
+    await second.ready;
+    const held = h.holdSaveStarted();
+    const undoing = saved.undo();
+    try {
+      await held.started;
+      await second.markLocalUnread("room", () => true);
+      const newer = h.journal();
+      held.release();
+      await expect(undoing).rejects.toThrow("Reading observation expired");
+      expect(h.journal()).toEqual(newer);
+      expect(second.localUnread("room")).toBeGreaterThan(0);
+    } finally {
+      held.release();
+    }
+  } finally {
+    second.dispose();
+  }
+});
+
+it("allows a failed undo save to retry without losing the captured marker", async () => {
+  const h = setup({}, false);
+  h.grant("room");
+  const unread = h.session.unread;
+  await unread.markUnreadLocal(h.target);
+  const saved = await unread.prepareChannelRead("room")();
+  const afterRead = h.journal();
+  h.failNextSave();
+
+  await expect(saved.undo?.()).rejects.toThrow("Storage update rejected");
+  expect(h.journal()).toEqual(afterRead);
+  await saved.undo?.();
+  expect(h.journal()?.localUnread.room).toBeGreaterThan(0);
+});
+
+it("lets a same-window prepared read consume intent restored by a queued Undo", async () => {
+  const h = setup({}, false);
+  h.grant("room");
+  const unread = h.session.unread;
+  await unread.markUnreadLocal(h.target);
+  const saved = await unread.prepareChannelRead("room")();
+  assert(saved.undo);
+
+  const held = h.holdSaveStarted();
+  const undoing = saved.undo();
+  try {
+    await held.started;
+    const reading = unread.prepareChannelRead("room")();
+    held.release();
+    await expect(undoing).resolves.toMatchObject({ durability: "saved" });
+    await expect(reading).resolves.toMatchObject({ durability: "saved" });
+    expect(h.journal()?.localUnread.room).toBeUndefined();
+  } finally {
+    held.release();
+  }
+});
+
+it("keeps Undo optional for results returned by older hosts", () => {
+  const legacy: ReadMutationResult = {
+    operationId: "legacy:1",
+    durability: "saved",
+    sync: "local-only",
+  };
+  expect(legacy.undo).toBeUndefined();
+});
+
+it("does not offer Undo when an explicit read cleared no saved unread intent", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([message(h.alice, "room", "ordinary", 11)]);
+  const unread = h.session.unread;
+  await unread.ensure();
+  clock(20);
+
+  const saved = await unread.prepareChannelRead("room")();
+  expect(saved.undo).toBeUndefined();
+});
 
 const channelMetadata = (h: ReturnType<typeof setup>, type?: string) =>
   signed(h.relay, {
