@@ -62,3 +62,4 @@ scan: install
     pnpm design:test:browser
     cargo clippy --workspace --locked --all-targets -- -D warnings
     cargo test --manifest-path src-tauri/Cargo.toml --locked
+import 'cone/cone.just'

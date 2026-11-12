@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Cone</string>
+    <key>CFBundleName</key>
+    <string>Cone</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Cone uses your microphone for Huddles and voice notes you choose to send.</string>
+</dict>
+</plist>

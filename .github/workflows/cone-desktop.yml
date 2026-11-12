@@ -1,0 +1,46 @@
+name: Cone Desktop
+
+# The Cone Desktop on Buzz 1.0 (cone-buzz-infra
+# slices/48-cone-desktop-on-buzz-app.md). Merge 1: every pull request to
+# `cone` and every push to it proves the fork shallow (criterion 2) and the
+# build's configuration exactly cone/build.env. The signed macOS release, the
+# updater and promotion arrive in merge 2, Windows in merge 3; every upstream
+# workflow stays disabled in this fork (cone/README.md).
+
+on:
+  pull_request:
+    branches: [cone]
+  push:
+    branches: [cone]
+
+permissions:
+  contents: read
+
+jobs:
+  shallow:
+    name: Shallow fork
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The base of the shallowness check comes from block/buzz-app itself,
+      # not from this fork, where a moved tag could hide a deeper diff.
+      - name: Fetch the pinned upstream tag from block/buzz-app
+        run: |
+          set -euo pipefail
+          base="$(tr -d '[:space:]' < cone/UPSTREAM)"
+          [[ "$base" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "::error::cone/UPSTREAM holds '$base', not a stable upstream tag vX.Y.Z"; exit 1; }
+          git fetch --no-tags https://github.com/block/buzz-app.git "+refs/tags/$base:refs/tags/$base"
+          echo "upstream $base = $(git rev-parse "$base^{commit}")"
+
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+
+      - name: cone-shallow-check
+        run: just cone-shallow-check
+
+      - name: cone-build-env-check
+        run: just cone-build-env-check
