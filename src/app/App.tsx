@@ -873,3 +873,4 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     </>
   );
 }
+// scratch: criterion 2 must go red
