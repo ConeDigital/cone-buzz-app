@@ -869,6 +869,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_release,
         claude_key::claude_api_key_status,
         claude_key::claude_api_key_set,
+        claude_key::claude_api_key_clear,
         jev::jev_classifier_status,
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
