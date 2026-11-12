@@ -610,13 +610,27 @@ export function EditableInput({
         const tr = state.tr;
         // Only adopt newly recognized tokens. Never rebuild editable text from
         // Markdown here: that would discard stored marks/whitespace on each key.
+        // A restored presentation token takes its renderer's editing mode.
         for (const item of [...decorations].reverse()) {
-          if (
-            next.tokens.some(
-              (token) => token.start === item.start && token.end === item.end,
+          const existing = next.tokens.find(
+            (token) => token.start === item.start && token.end === item.end,
+          );
+          if (existing) {
+            const { attrs } = existing.node;
+            if (
+              attrs.editAsText !== !!item.editAsText &&
+              !attrs.recipient &&
+              !attrs.resource &&
+              !attrs.semantic &&
+              !attrs.pending
             )
-          )
+              tr.setNodeAttribute(
+                existing.from,
+                "editAsText",
+                !!item.editAsText,
+              );
             continue;
+          }
           const from = next.position(item.start),
             to = next.position(item.end, -1);
           if (next.source(from) !== item.start || next.source(to) !== item.end)
