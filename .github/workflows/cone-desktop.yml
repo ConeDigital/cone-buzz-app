@@ -64,7 +64,7 @@ jobs:
     name: Shallow fork
     if: github.event_name != 'workflow_dispatch'
     runs-on: macos-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -95,6 +95,20 @@ jobs:
 
       - name: cone-updater-test
         run: just cone-updater-test
+
+      # The in-app rebrand (cone-buzz-infra Slice 51, ADR-364): the
+      # transform's mutation test, then the exact check with the transformed
+      # frontend type-checked, built and scanned — before any Rust compiles,
+      # so a stale manifest row fails in minutes. The release build applies
+      # the same transform (cone-desktop-build).
+      - name: Frontend dependencies (the transform parses with the app's own rolldown)
+        run: pnpm install --frozen-lockfile
+
+      - name: cone-rebrand-test
+        run: just cone-rebrand-test
+
+      - name: cone-rebrand-check
+        run: just cone-rebrand-check
 
   dispatch-inputs:
     name: Dispatch inputs

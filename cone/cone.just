@@ -97,11 +97,27 @@ cone-desktop-build target="aarch64-apple-darwin" version="2.0.0-local":
         plugins: { updater: { pubkey, endpoints: [endpoint] } } }, null, 2) + "\n");' \
       "$delta" "$VERSION" "$BUZZ_UPDATER_PUBLIC_KEY" "$BUZZ_UPDATER_ENDPOINT" "$artifacts"
     echo "updater: $BUZZ_UPDATER_ENDPOINT, updater artifacts $artifacts"
+    # The in-app rebrand (cone-buzz-infra Slice 51, ADR-364): cone/rebrand.sh
+    # rewrites the working copy (exact manifests, the residue scan) after the
+    # shallowness check has judged the source, and the trap puts every file
+    # back. The window's title is a third delta, made from upstream's own
+    # window settings for this target's platform.
+    root="$PWD"
+    trap 'cd "$root" && cone/rebrand.sh restore' EXIT
+    cone/rebrand.sh apply
+    cone/rebrand.sh scan
+    windows="$(dirname "$delta")/tauri.cone-windows.conf.json"
+    node cone/rebrand/transform.mjs window-delta "$TARGET" > "$windows"
     rm -rf "target/$TARGET/release/bundle"
     # CI=true makes Tauri's bundle_dmg.sh skip its Finder AppleScript (the
     # window layout and the background), which needs an Automation grant on a
     # workstation; the release (merge 2) sets TAURI_BUNDLER_DMG_IGNORE_CI=true.
-    CI=true pnpm tauri build --ci --bundles app,dmg --target "$TARGET" --config "$PWD/cone/tauri.cone.conf.json" --config "$delta" -- --locked
+    CI=true pnpm tauri build --ci --bundles app,dmg --target "$TARGET" --config "$PWD/cone/tauri.cone.conf.json" --config "$windows" --config "$delta" -- --locked
+    cone/rebrand.sh bundle-scan
+    # Put the tree back now (the trap stays for the failure paths); the clean
+    # tree is asserted at the end.
+    cone/rebrand.sh restore
+    trap - EXIT
     bundle="target/$TARGET/release/bundle"
     if [[ "$APPLE_SIGNING_IDENTITY" != - ]]; then cone/sign-nested.sh "$bundle/macos/Cone.app"; fi
     plist="$bundle/macos/Cone.app/Contents/Info.plist"
@@ -112,6 +128,27 @@ cone-desktop-build target="aarch64-apple-darwin" version="2.0.0-local":
     left="$(git status --porcelain --untracked-files=all | sed '/^$/d' || true)"
     [[ -z "$left" ]] || { printf 'cone-desktop-build: the tree is not clean after the build:\n%s\n' "$left" >&2; exit 1; }
     echo "cone-desktop-build: $bundle/macos/Cone.app, tree clean"
+
+# The in-app rebrand is exact (Slice 51 criterion 1, ADR-364): every
+# replacement's upstream hash, every lines.tsv row and every strings.tsv and
+# keep.tsv count holds; the residue scan over every file in scope finds no
+# "Buzz", "Block" or bee outside cone/rebrand/exceptions.tsv; the transformed
+# frontend type-checks and builds and its bundle carries the word only inside
+# kept runtime names; the tree is restored. Refuses a dirty tree under the
+# paths it rewrites (they would be restored to HEAD).
+cone-rebrand-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . bin/activate-hermit >/dev/null
+    cone/rebrand.sh check --build
+
+# Planted changes, each committed in a disposable worktree, each failing the
+# check naming the path (cone/rebrand-test.sh lists them).
+cone-rebrand-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . bin/activate-hermit >/dev/null
+    bash cone/rebrand-test.sh
 
 # cone/updater-verify.sh and cone/promote-check.sh against throwaway keys'
 # signatures and planted feeds (cone/test/updater).
