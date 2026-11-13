@@ -9,7 +9,7 @@ Inputs (tracked):
   cone/icons/icon-1024.png       the app icon tile (Slice 29)
 
 Outputs (tracked, under cone/rebrand/files/, each replacing the upstream file of the same path):
-  public/buzz-wordmark.png       the wordmark's glyphs fitted to upstream's 777x326 box, dark on
+  public/buzz-wordmark.png       the wordmark's glyphs fitted to upstream's 777x326 box, white on
                                  transparent: the welcome screen recolours its alpha in a shader
                                  and uses it as a mask (src/features/identity/OnboardingWordmark.tsx)
   public/app-icon.png            the app icon at 512 px (the centre of the pairing QR code, src-tauri/src/qr.rs)
@@ -35,7 +35,7 @@ ICON_1024 = ROOT / "cone" / "icons" / "icon-1024.png"
 
 BOX = (777, 326)  # upstream's public/buzz-wordmark.png
 MARGIN = (28, 22)  # upstream's glyphs leave about this much on each side
-INK = "#231E1F"
+INK = "#FFFFFF"  # white: the welcome screen is Cone's gradient (Slice 51, owner 2026-11-13)
 
 
 def render(svg: str, width: int) -> Image.Image:

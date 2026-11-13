@@ -70,7 +70,7 @@ or embeds with `include_str!`. `node cone/rebrand/transform.mjs scope` lists it.
 |----------|------|
 | `strings.tsv` | path and the exact count of the word in its string text. Written by `cone/rebrand.sh measure` |
 | `keep.tsv` | text whose `Buzz` is a name another program reads (relay headers, the relay's NIP-11 name, the huddle marker, harness homes on disk, `TERM_PROGRAM`, the phone app's name): left alone, and its count must hold |
-| `lines.tsv` | exact text replacements (the share card's mark and its "BUZZ AGENT") |
+| `lines.tsv` | exact text replacements: the share card's mark and its "BUZZ AGENT"; the default accent `iris` (purple); the welcome screen in Cone's colours — the logo's purple-red-orange gradient, white lettering, white and peach marks, the onboarding cards' tint |
 | `replacements.tsv` | whole files from `rebrand/files/`, each pinned to the upstream file's SHA-256 (the wordmark, marks, the QR icon); `make-rebrand-assets.py` renders the PNGs |
 | `exceptions.tsv` | residue-scan hits that stay, each with a reason |
 
