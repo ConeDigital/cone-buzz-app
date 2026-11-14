@@ -432,7 +432,13 @@ jobs:
   release:
     name: GitHub Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/cone-desktop-v')
+    # always(): a resume skips `shallow` by design, and a job whose ancestor
+    # was skipped is skipped too unless its condition says otherwise — the
+    # 2.1.0 resume notarized both builds and published nothing (Slice 51).
+    # needs.build.result is 'success' only when every matrix target succeeded.
+    if: >-
+      always() && needs.build.result == 'success' &&
+      startsWith(github.ref, 'refs/tags/cone-desktop-v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
