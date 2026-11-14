@@ -1,0 +1,6 @@
+# path<TAB>sha256 — files/<path> replaces the upstream file whose content at cone/UPSTREAM hashes so. An update that moves a hash shows the upstream diff in its PR, carries it into Cone's copy or says why not, then updates the hash.
+public/app-icon.png	90241e1dd33c637aae1555cb53d68a425ee1cf73deb7432121e7e5eaa606b095
+public/buzz-loading-mark.svg	eff4d24b46817ffb8061f87d6a5972f2de547d3a8cfedb8acbfc57c149d9fd74
+public/buzz-mark.svg	663f093dd8d31e5297ee536baa92f506c028b62e95a2933eb2d64bc16acba11c
+public/buzz-wordmark.png	d54e22d3f71b2bdf621b852c453fef0c5e173767f7f6dbc036cbb6091bdeb728
+public/welcome-bee.svg	9e14de8a7f3da9d7147ba56a213fffbf61ddd1616c3509f8927e5358c68aaf5c

@@ -1,0 +1,32 @@
+# path<TAB>text (JSON)<TAB>count<TAB>reason — a "Buzz" that is a runtime name, not the brand: the
+# relay's or another program's identifier, a protocol marker, a path on disk. The text must occur
+# exactly count times in the file's string text (a TS/JS literal includes its quotes, a Rust literal
+# its quotes); the word rule leaves every Buzz inside it. Slice 51 decision 3 (cone-buzz-infra).
+src/features/relay/transport.ts	"X-Buzz-Live-ID"	1	an HTTP header the relay reads
+src/features/relay/transport.ts	"X-Buzz-Read-Priority"	4	an HTTP header the relay reads
+src-tauri/src/relay.rs	"\"Buzz/{version}\""	1	the User-Agent of native relay requests
+src-tauri/src/relay.rs	"\"Buzz\""	1	the User-Agent before the version is known
+src/features/communities/community-name.ts	"\"Buzz Relay\""	1	the relay's default NIP-11 name, compared to tell an unnamed community
+src/features/communities/names.ts	"\"Buzz Relay\""	1	the relay's default NIP-11 name, compared to tell an unnamed community
+src/features/communities/find-community.ts	"\"Buzz Relay\""	1	the relay's default NIP-11 name, compared to recognise a Buzz relay
+src/features/communities/CommunityDialog.tsx	"\"Buzz Relay\""	1	the relay's default NIP-11 name, compared to tell an unnamed community
+src-tauri/src/relay/huddle.rs	"Buzz Huddle (buzz.huddles/v1)"	1	the huddle channel marker other Buzz clients read
+src-tauri/src/relay/channel_writes.rs	"\"Buzz Huddle (\""	1	the huddle channel marker other Buzz clients read
+src/features/huddle/lifecycle.ts	"Buzz Huddle (buzz.huddles/v1)"	1	the huddle channel marker other Buzz clients read
+src/features/relay/channel-details-protocol.ts	"Buzz Huddle ("	2	the huddle channel marker other Buzz clients read
+src-tauri/src/terminal/unix.rs	"\"Buzz\""	1	TERM_PROGRAM, which shells and tools test
+src-tauri/src/legacy_cli_shortcut.rs	"Buzz.app/Contents/MacOS"	1	the path of Block's old app, whose CLI shortcut is removed
+src/bundled/claude-code/manifest.json	"Application Support/Buzz/"	2	the harness home on disk, a compiled path shared by every Buzz 1.0 build (Slice 48 decision 3)
+src/bundled/claude-code/security.ts	"Application Support/Buzz/"	1	the harness home on disk, a compiled path
+src/bundled/codex/README.md	"Application Support/Buzz/"	1	the harness home on disk, a compiled path
+src/bundled/codex/isolation-live.mjs	"Application Support/Buzz/"	1	the harness home on disk, a compiled path
+src/bundled/claude-code/claude.sh	"Application Support/Buzz/"	2	the harness homes on disk, which the launcher creates and every Buzz 1.0 build shares
+src/bundled/codex/codex.sh	"Application Support/Buzz/"	1	the harness home on disk, which the launcher creates and every Buzz 1.0 build shares
+src/bundled/pi/launch.mjs	"\"Buzz\""	2	the harness home on disk (macOS and Windows), a compiled path
+src/bundled/pairing/MobileApp.tsx	"Get Buzz on your phone"	1	names the phone app people install, Block's Buzz, until Cone's (Slice 43)
+src/bundled/pairing/MobileApp.tsx	"Install Buzz on your phone"	1	names the phone app people install, Block's Buzz, until Cone's (Slice 43)
+src/bundled/pairing/MobileApp.tsx	"get Buzz from"	1	names the phone app people install, Block's Buzz, until Cone's (Slice 43)
+src/bundled/pairing/PairingSettings.tsx	"Open Buzz on your phone"	1	names the phone app people install, Block's Buzz, until Cone's (Slice 43)
+src/bundled/pairing/PairingSettings.tsx	"the Buzz mobile app"	1	names the phone app people install, Block's Buzz, until Cone's (Slice 43)
+src/bundled/pairing/PairingSettings.tsx	"with Buzz on your phone"	1	names the phone app people install, Block's Buzz, until Cone's (Slice 43)
+src/bundled/pairing/README.md	"Buzz on your phone"	2	names the phone app people install, Block's Buzz, until Cone's (Slice 43)

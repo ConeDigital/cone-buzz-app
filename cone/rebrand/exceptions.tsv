@@ -1,0 +1,13 @@
+# path<TAB>text<TAB>reason — a residue-scan hit on a line containing text in that file is not a finding. Each one has a reason.
+public/appearance-init.js	"bee"	the stored id of the accent colour the app shows as "Honey"; a saved preference, never shown
+src/shared/design-system/tokens/brand.ts	"bee"	the stored id of the accent colour the app shows as "Honey"
+src/shared/theme/accent.ts	"bee"	the stored id of the accent colour the app shows as "Honey"
+src/app/AppearanceSettings.tsx	color === "bee"	the stored id of the accent colour; the label it maps to is "Honey"
+public/compute-widget.js	"bee"	the stored id of a compute-widget animation, which draws the orbit; never shown
+src/features/identity/OnboardingBees.tsx	welcome-bee-	element ids of the welcome animation, which draws public/welcome-bee.svg — Cone's mark after replacements.tsv
+src/features/identity/OnboardingScreen.tsx	/welcome-bee.svg	the asset path; the file is Cone's mark after replacements.tsv
+src/features/identity/KeyImport.tsx	Block can use that copy	nominative: Block's Builderlab key backup, shown only with a Builderlab account, which this build cannot sign in to (BUZZ_BUILDERLAB_URL empty, ADR-353)
+src/features/identity/KeyLost.tsx	Block can use that copy	nominative: Block's Builderlab key backup, shown only with a Builderlab account, which this build cannot sign in to (BUZZ_BUILDERLAB_URL empty, ADR-353)
+src/bundled/mentions/README.md	Block label	a block of text in a sort order, not the company
+src/shared/design-system/icons/index.ts	Official Block Goose mark	provenance note of an icon in the design registry (Goose is Block's product), never shown in the app
+src/shared/design-system/icons/index.ts	Block, Inc. corporate mark	provenance note of an icon in the design registry, never shown in the app

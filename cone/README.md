@@ -11,7 +11,9 @@ there until every Mac has moved.
 `import 'cone/cone.just'` line in the root `justfile` and
 `.github/workflows/cone-desktop.yml`. `just cone-shallow-check` refuses any
 other path, locally and on every pull request. Never change an upstream file.
-The window still says "Buzz": only the bundle is branded (ADR-340 decision 4).
+The window says "Cone" too: the in-app rebrand (`cone-buzz-infra` Slice 51,
+ADR-364) rewrites the build's working copy and puts it back, so the tracked
+tree still differs from the tag under `cone/` only.
 
 | Path | What |
 |------|------|
@@ -20,7 +22,8 @@ The window still says "Buzz": only the bundle is branded (ADR-340 decision 4).
 | `build-env.sh` | refuses a repository-root `.env*`, clears every `BUZZ_*` the build reads or the shell exports, then loads `build.env` |
 | `tauri.cone.conf.json` | the Tauri config delta: name, identifier, icons, `Info.plist`, DMG layout and background |
 | `Info.plist`, `icons/`, `make-assets.py` | the menu-bar name and the microphone usage string; the icons and DMG background, generated from `icons/source.png` |
-| `cone.just` | `cone-desktop-build`, `cone-shallow-check`, `cone-build-env-check`, `cone-notarize-test`, `cone-updater-test` |
+| `cone.just` | `cone-desktop-build`, `cone-shallow-check`, `cone-build-env-check`, `cone-rebrand-check`, `cone-rebrand-test`, `cone-notarize-test`, `cone-updater-test` |
+| `rebrand.sh`, `rebrand/`, `rebrand-test.sh` | the in-app rebrand: the transform, its manifests and replacement pictures, its mutation test (below) |
 | `updater.pub` | the updater's public key (minisign `A11AAB7556EB3BE2`, the old app's), compiled into every build with the feed `https://buzz.cone.digital/desktop/2/latest.json` |
 | `sign-nested.sh` | signs the helpers Buzz 1.0 bundles in `Contents/Resources/bin` (Tauri leaves them linker-signed), then the app |
 | `notarize.sh`, `release-advance.sh`, `notarize-test.sh` | notarization (submit; wait through dropped requests; staple), the resumable stages of one architecture's release, and their test against mocks |
@@ -52,12 +55,50 @@ Never confirm the agent-protection storage upgrade while the old app is still
 needed: it is one-way for older Buzz 1.0 builds (upstream
 `docs/releases.md`).
 
+## The in-app rebrand
+
+`cone/rebrand.sh apply` replaces every capitalised `Buzz` in the string text
+of what the app ships with `cone/rebrand/word` (`Cone`), by exact count, and
+`restore` puts the files back; `cone-desktop-build` does both around `tauri
+build`. What is in scope: TypeScript/TSX/JS under `src/` (not tests),
+`public/*.js` and `*.svg`, the root HTML pages, Rust in `src-tauri/src` and
+every crate it links plus `crates/agent-command`, and — whole, comments
+included — every file the app imports as a string (`?raw`, Markdown, JSON)
+or embeds with `include_str!`. `node cone/rebrand/transform.mjs scope` lists it.
+
+| Manifest | What |
+|----------|------|
+| `strings.tsv` | path and the exact count of the word in its string text. Written by `cone/rebrand.sh measure` |
+| `keep.tsv` | text whose `Buzz` is a name another program reads (relay headers, the relay's NIP-11 name, the huddle marker, harness homes on disk, `TERM_PROGRAM`, the phone app's name): left alone, and its count must hold |
+| `lines.tsv` | exact text replacements: the share card's mark and its "BUZZ AGENT"; the default accent `iris` (purple); the welcome screen in Cone's colours — the logo's purple-red-orange gradient, white lettering, white and peach marks, the onboarding cards' tint |
+| `replacements.tsv` | whole files from `rebrand/files/`, each pinned to the upstream file's SHA-256 (the wordmark, marks, the QR icon); `make-rebrand-assets.py` renders the PNGs |
+| `exceptions.tsv` | residue-scan hits that stay, each with a reason |
+
+The window title is not in `tauri.cone.conf.json`: `transform.mjs
+window-delta <target>` writes upstream's own window settings for that
+platform with the title changed, as a `--config` delta per build.
+
+`just cone-rebrand-check` applies, scans for `Buzz`, `BUZZ`, `Block` and
+bees, builds the frontend, checks the bundle and restores; `just
+cone-rebrand-test` plants seventeen mutations, each of which must fail.
+Both run on every pull request.
+
+**When the check fails on an upstream update:** a count in `strings.tsv` —
+run `cone/rebrand.sh measure > /tmp/s && head -1 cone/rebrand/strings.tsv | cat - /tmp/s > cone/rebrand/strings.tsv`
+on a clean tree, read the diff, and look at each new hit (`node
+cone/rebrand/transform.mjs hits`): a name another program reads goes into
+`keep.tsv`, everything else is rebranded by the rule. A `keep.tsv` count —
+upstream added or dropped a use of that name: decide which. A hash in
+`replacements.tsv` — `git diff <old> <new> -- <path>`, carry the change into
+`rebrand/files/<path>` or say why not, then update the hash. A residue —
+a row or an exception with a reason.
+
 ## Upstream update
 
 Merge the next stable upstream tag into a branch `cone-update/<tag>` (merge,
 never rebase): `git fetch upstream tag <tag> && git merge <tag>`; set
 `cone/UPSTREAM` to it, `just cone-shallow-check`, `just cone-build-env-check`,
-build locally, then a pull request to `cone` (`gh pr create -R
+`just cone-rebrand-check` (fix what it names, above), build locally, then a pull request to `cone` (`gh pr create -R
 ConeDigital/cone-buzz-app`) that lists any workflow the merge adds; right
 after it merges, disable each (`gh workflow disable -R
 ConeDigital/cone-buzz-app <name>`): every upstream workflow stays disabled.
