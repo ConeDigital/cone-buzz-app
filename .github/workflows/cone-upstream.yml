@@ -1,0 +1,116 @@
+name: Cone upstream
+
+# The Cone Desktop follows block/buzz-app's stable releases (cone-buzz-infra
+# slices/54-desktop-upstream-watch.md, ADR-375).
+#
+# Daily, and on demand from `cone`: when block/buzz-app has a stable release
+# vX.Y.Z newer than cone/UPSTREAM, cone/upstream-watch.sh merges it into a
+# branch cone-update/<tag>, sets cone/UPSTREAM, re-measures the rebrand's
+# strings.tsv and opens one pull request per tag with the triage of what
+# changed. It opens it with the GitHub App cone-desktop-updater, not
+# GITHUB_TOKEN: a pull request GITHUB_TOKEN opens runs no CI, and
+# GITHUB_TOKEN may never push a change to a workflow file, which an upstream
+# merge carries. Closing the pull request skips that tag.
+#
+# When a push to `cone` changes cone/UPSTREAM (the pull request merged, or an
+# update by hand), the `tag` job tags that commit cone-desktop-v2.<next>.0
+# with the App, which starts cone-desktop.yml's release; the build still
+# waits for the owner at cone-release, and installed apps get it only once it
+# is promoted. Then every active workflow that is not Cone's is disabled:
+# an upstream merge may add one.
+#
+# The App's key is in the environment cone-upstream (deployments from `cone`
+# only, no reviewer); each job asks for the narrowest token it needs.
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: A stable block/buzz-app tag (vX.Y.Z) to open the update for; empty = the newest newer than cone/UPSTREAM
+        required: false
+        default: ''
+  push:
+    branches: [cone]
+    paths: [cone/UPSTREAM]
+
+concurrency:
+  group: cone-upstream-${{ github.event_name == 'push' && 'tag' || 'watch' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: Watch block/buzz-app
+    if: github.event_name != 'push' && github.ref == 'refs/heads/cone'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    environment: cone-upstream
+    steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ vars.CONE_UPSTREAM_APP_ID }}
+          private-key: ${{ secrets.CONE_UPSTREAM_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: cone
+          fetch-depth: 0
+          token: ${{ steps.app.outputs.token }}
+
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+
+      - name: Commit as the App
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          id="$(gh api "users/${SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+
+      - name: Open the update pull request
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TAG: ${{ inputs.tag }}
+        run: cone/upstream-watch.sh run "$TAG"
+
+  tag:
+    name: Tag the update
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: cone-upstream
+    permissions:
+      contents: read
+      actions: write # disables any upstream workflow the merge brought
+    steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ vars.CONE_UPSTREAM_APP_ID }}
+          private-key: ${{ secrets.CONE_UPSTREAM_APP_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app.outputs.token }}
+
+      - name: Tag cone-desktop-v2.<next>.0
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: cone/upstream-watch.sh tag "$BEFORE" "$GITHUB_SHA"
+
+      - name: Every upstream workflow stays disabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: cone/upstream-watch.sh disable-workflows
