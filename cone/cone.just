@@ -4,7 +4,7 @@
 # under cone/ (decision 1). No recipe here changes a tracked file outside cone/.
 
 # Paths a Cone commit may change, relative to the pinned upstream tag.
-cone_allowed := "^(cone/.*|\\.github/workflows/cone-desktop\\.yml|justfile)$"
+cone_allowed := "^(cone/.*|\\.github/workflows/cone-(desktop|upstream)\\.yml|justfile)$"
 
 # The fork stays shallow (criterion 2): every path that differs from the pinned
 # upstream tag is under cone/, is the Cone workflow, or is the justfile with
@@ -149,6 +149,14 @@ cone-rebrand-test:
     set -euo pipefail
     . bin/activate-hermit >/dev/null
     bash cone/rebrand-test.sh
+
+# The upstream watcher's choices (cone-buzz-infra Slice 54, ADR-375): the
+# newest stable tag, the next version, the tag after a merge, the triage and
+# the workflow guard; no network.
+cone-upstream-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bash cone/upstream-test.sh
 
 # cone/updater-verify.sh and cone/promote-check.sh against throwaway keys'
 # signatures and planted feeds (cone/test/updater).

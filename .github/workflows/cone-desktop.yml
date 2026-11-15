@@ -96,6 +96,9 @@ jobs:
       - name: cone-updater-test
         run: just cone-updater-test
 
+      - name: cone-upstream-test
+        run: just cone-upstream-test
+
       # The in-app rebrand (cone-buzz-infra Slice 51, ADR-364): the
       # transform's mutation test, then the exact check with the transformed
       # frontend type-checked, built and scanned — before any Rust compiles,

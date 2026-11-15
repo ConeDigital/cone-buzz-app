@@ -9,7 +9,7 @@ there until every Mac has moved.
 
 **The fork stays shallow:** everything Cone adds is under `cone/`, plus one
 `import 'cone/cone.just'` line in the root `justfile` and
-`.github/workflows/cone-desktop.yml`. `just cone-shallow-check` refuses any
+`.github/workflows/cone-desktop.yml` and `cone-upstream.yml`. `just cone-shallow-check` refuses any
 other path, locally and on every pull request. Never change an upstream file.
 The window says "Cone" too: the in-app rebrand (`cone-buzz-infra` Slice 51,
 ADR-364) rewrites the build's working copy and puts it back, so the tracked
@@ -22,8 +22,9 @@ tree still differs from the tag under `cone/` only.
 | `build-env.sh` | refuses a repository-root `.env*`, clears every `BUZZ_*` the build reads or the shell exports, then loads `build.env` |
 | `tauri.cone.conf.json` | the Tauri config delta: name, identifier, icons, `Info.plist`, DMG layout and background |
 | `Info.plist`, `icons/`, `make-assets.py` | the menu-bar name and the microphone usage string; the icons and DMG background, generated from `icons/source.png` |
-| `cone.just` | `cone-desktop-build`, `cone-shallow-check`, `cone-build-env-check`, `cone-rebrand-check`, `cone-rebrand-test`, `cone-notarize-test`, `cone-updater-test` |
+| `cone.just` | `cone-desktop-build`, `cone-shallow-check`, `cone-build-env-check`, `cone-rebrand-check`, `cone-rebrand-test`, `cone-notarize-test`, `cone-updater-test`, `cone-upstream-test` |
 | `rebrand.sh`, `rebrand/`, `rebrand-test.sh` | the in-app rebrand: the transform, its manifests and replacement pictures, its mutation test (below) |
+| `upstream-watch.sh`, `upstream-test.sh` | the upstream watcher (below): the update pull request for each new stable tag, the tag after it merges, the workflow guard; their test |
 | `updater.pub` | the updater's public key (minisign `A11AAB7556EB3BE2`, the old app's), compiled into every build with the feed `https://buzz.cone.digital/desktop/2/latest.json` |
 | `sign-nested.sh` | signs the helpers Buzz 1.0 bundles in `Contents/Resources/bin` (Tauri leaves them linker-signed), then the app |
 | `notarize.sh`, `release-advance.sh`, `notarize-test.sh` | notarization (submit; wait through dropped requests; staple), the resumable stages of one architecture's release, and their test against mocks |
@@ -95,7 +96,27 @@ a row or an exception with a reason.
 
 ## Upstream update
 
-Merge the next stable upstream tag into a branch `cone-update/<tag>` (merge,
+**The watcher does this** (`cone-buzz-infra` Slice 54, ADR-375):
+`.github/workflows/cone-upstream.yml` runs daily (05:23 UTC) and on demand
+(Actions → *Cone upstream* → *Run workflow* on `cone`, optionally with a
+tag). For each stable `block/buzz-app` release newer than `UPSTREAM` it opens
+**one** pull request `Upstream vX.Y.Z (cone-desktop-v2.N.0)` from
+`cone-update/<tag>`: the tag merged, `UPSTREAM` set, `strings.tsv`
+re-measured, `rebrand.sh check`'s result and the triage of the commits
+(security and identity, relay and membership, Windows, updater and builds,
+changed upstream workflows and Tauri config). Its CI is the usual one. A
+draft means the check failed: fix what it names on that branch (above).
+**Merging it tags `cone-desktop-v2.<next minor>.0`** (the `tag` job, on any
+push to `cone` that changes `UPSTREAM`), which starts the release below; the
+build still waits for the owner. Then every active workflow that is not
+Cone's is disabled. **Closing it skips that tag**; the watcher never reopens
+a tag that has had a pull request. It acts as the GitHub App
+`cone-desktop-updater` (key in the environment `cone-upstream`), because a
+pull request `GITHUB_TOKEN` opens runs no CI and `GITHUB_TOKEN` may not push
+an upstream merge that touches a workflow file.
+
+By hand, when the merge conflicts (the run fails naming the files) or the
+watcher is off: merge the next stable upstream tag into a branch `cone-update/<tag>` (merge,
 never rebase): `git fetch upstream tag <tag> && git merge <tag>`; set
 `cone/UPSTREAM` to it, `just cone-shallow-check`, `just cone-build-env-check`,
 `just cone-rebrand-check` (fix what it names, above), build locally, then a pull request to `cone` (`gh pr create -R
