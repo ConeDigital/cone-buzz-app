@@ -42,6 +42,9 @@ export const test = base.extend({
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
   profilePicture: ["", { option: true }],
+  // The viewer profile's `tz`. The empty opt-out keeps launch from sharing the
+  // browser's zone into it; null leaves the key out so launch shares one.
+  profileTimeZone: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
   presenceThreadAuthors: [0, { option: true }],
@@ -133,6 +136,7 @@ export const test = base.extend({
       actionProfile,
       agentMessageDeletion,
       profilePicture,
+      profileTimeZone,
       readState,
       threadUnread,
       presenceThreadAuthors,
@@ -257,7 +261,11 @@ export const test = base.extend({
         sign(
           0,
           [],
-          JSON.stringify({ name: "Fixture Reader", picture: profilePicture }),
+          JSON.stringify({
+            name: "Fixture Reader",
+            picture: profilePicture,
+            ...(profileTimeZone === null ? {} : { tz: profileTimeZone }),
+          }),
           userKey,
         ),
       ]),
@@ -2533,7 +2541,7 @@ export const test = base.extend({
             status: String(response.status()),
           });
         if (
-          response.url().endsWith("/stream-observer") &&
+          /\/stream-(observer|priority)$/.test(response.url()) &&
           response.status() === 404
         ) {
           const { streamId } = response.request().postDataJSON();
@@ -2628,6 +2636,8 @@ export const test = base.extend({
         },
         origin,
         report,
+        /** The viewer's current kind 0 content in `community`. */
+        ownProfile: (community) => JSON.parse(profiles.get(community).content),
         watchPageErrors(other) {
           const watched = watchPageErrors(other);
           watchedPages.push(watched);
@@ -2961,7 +2971,7 @@ export const test = base.extend({
         },
       });
       expect(report.unexpected).toEqual([]);
-      // Aborted startup streams can race an already-dispatched observer control.
+      // Retired streams can race already-dispatched observer or priority controls.
       // Permit only 404s whose exact stream was already closed by the real host;
       // a current/unknown stream failure still fails, and all errors stay recorded.
       report.retiredObserverControls = [...observerFailures];

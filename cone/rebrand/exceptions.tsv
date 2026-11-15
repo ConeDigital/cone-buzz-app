@@ -11,3 +11,5 @@ src/features/identity/KeyLost.tsx	Block can use that copy	nominative: Block's Bu
 src/bundled/mentions/README.md	Block label	a block of text in a sort order, not the company
 src/shared/design-system/icons/index.ts	Official Block Goose mark	provenance note of an icon in the design registry (Goose is Block's product), never shown in the app
 src/shared/design-system/icons/index.ts	Block, Inc. corporate mark	provenance note of an icon in the design registry, never shown in the app
+src/bundled/agents/AgentCard.tsx	data-accent="bee"	the stored id of the accent colour the app shows as "Honey" (v1.0.2), never shown
+src/bundled/mentions/README.md	Honey Bee	an example display name in a developer note about mention matching (v1.0.2), not the app's name
