@@ -17,11 +17,12 @@ name: Cone upstream
 # merge carries. Closing the pull request skips that tag.
 #
 # When a push to `cone` changes cone/UPSTREAM (the pull request merged, or an
-# update by hand), the `tag` job tags that commit cone-desktop-v2.<next>.0
+# update by hand), the `tag` job first disables every active workflow that is
+# not Cone's, then tags that commit cone-desktop-v2.<next>.0
 # with the App, which starts cone-desktop.yml's release; the build still
 # waits for the owner at cone-release, and installed apps get it only once it
-# is promoted. Then every active workflow that is not Cone's is disabled, as
-# a backstop behind the guard.
+# is promoted. The disabling comes first so that no workflow the merge
+# brought runs on the tag; it is a backstop behind the guard.
 #
 # The App's key is in the environment cone-upstream (deployments from `cone`
 # only, no reviewer); each job asks for the narrowest token it needs.
@@ -113,12 +114,14 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app.outputs.token }}
 
-      - name: Tag cone-desktop-v2.<next>.0
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: cone/upstream-watch.sh tag "$BEFORE" "$GITHUB_SHA"
-
+      # before the tag: a workflow the merge brought that runs on a tag push
+      # must be disabled before the cone-desktop-v* tag exists (review round 2)
       - name: Every upstream workflow stays disabled
         env:
           GH_TOKEN: ${{ github.token }}
         run: cone/upstream-watch.sh disable-workflows
+
+      - name: Tag cone-desktop-v2.<next>.0
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: cone/upstream-watch.sh tag "$BEFORE" "$GITHUB_SHA"

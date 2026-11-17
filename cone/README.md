@@ -109,8 +109,9 @@ changed upstream workflows and Tauri config). Its CI is the usual one. A
 draft means the check failed: fix what it names on that branch (above).
 **Merging it tags `cone-desktop-v2.<next minor>.0`** (the `tag` job, on any
 push to `cone` that changes `UPSTREAM`), which starts the release below; the
-build still waits for the owner. Then every active workflow that is not
-Cone's is disabled, a backstop. **Nothing is pushed when the merge adds a
+build still waits for the owner. Before it tags, every active workflow
+that is not Cone's is disabled, a backstop: a workflow that ran on the tag
+push would otherwise start. **Nothing is pushed when the merge adds a
 workflow file, or changes one that is not `disabled_manually`** (`guard`):
 the branch push, the pull request or the merge would start it, and
 disabling it afterwards stops no run that has started. The run fails
@@ -127,10 +128,12 @@ never rebase): `git fetch upstream tag <tag> && git merge <tag>`; set
 `just cone-rebrand-check` (fix what it names, above), build locally, then a pull request to `cone` (`gh pr create -R
 ConeDigital/cone-buzz-app`). **Before pushing a branch that adds a workflow
 file** (or changes one that is not `disabled_manually`, `gh workflow list
---all`), read its `on:`: push only when nothing in it fires on a branch push,
-a pull request or a push to `cone`, say why in the pull request, and right
-after it merges disable it (`gh workflow disable -R ConeDigital/cone-buzz-app
-<name>`). Otherwise that update waits: there is no safe way yet to import a
+--all`), read its `on:`: push only when it holds nothing but
+`workflow_dispatch` or `workflow_call`. Anything else can start it before
+it is disabled: a push of a branch or of a tag (merging an update pushes a
+`cone-desktop-v*` tag), a pull request, a schedule, `workflow_run`, a
+release. Say so in the pull request; after it merges, check that the `tag`
+job disabled it (`gh workflow list --all -R ConeDigital/cone-buzz-app`). Otherwise that update waits: there is no safe way yet to import a
 workflow that would run (`cone-buzz-infra` Slice 54, §8).
 Re-read the trigger signals and the facts in `cone-buzz-infra`
 `docs/upstream.md` at each update.

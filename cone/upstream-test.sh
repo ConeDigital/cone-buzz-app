@@ -147,15 +147,18 @@ G="$T/guard"; git init -q -b cone "$G"
 (
   cd "$G"; git config user.name test; git config user.email test@cone.digital
   mkdir -p .github/workflows
-  for f in ci release cone-desktop desktop-build; do echo "on: push" > ".github/workflows/$f.yml"; done
+  for f in ci release cone-desktop desktop-build "my flow"; do echo "on: push" > ".github/workflows/$f.yml"; done
   git add -A; git commit -q -m base; git tag g-base
   echo "on: [push, pull_request]" > .github/workflows/new.yml; git add -A; git commit -q -m add; git tag g-add
   git reset -q --hard g-base; echo "# changed" >> .github/workflows/ci.yml; git rm -q .github/workflows/desktop-build.yml
   echo notes > .github/workflows/README.md; git add -A; git commit -q -m change; git tag g-change
   git reset -q --hard g-base; echo "# changed" >> .github/workflows/release.yml; git commit -qam live; git tag g-live
   git reset -q --hard g-base; git mv .github/workflows/ci.yml .github/workflows/ci2.yml; git commit -qm rename; git tag g-rename
+  git reset -q --hard g-base; echo "on: push" > .github/workflows/发布.yml; git add -A; git commit -qm unicode; git tag g-unicode
+  git reset -q --hard g-base; echo "on: push" > .github/workflows/Deploy.YML; git add -A; git commit -qm upper; git tag g-upper
+  git reset -q --hard g-base; echo "# changed" >> ".github/workflows/my flow.yml"; git commit -qam space; git tag g-space
 )
-states=$'disabled_manually .github/workflows/ci.yml\ndisabled_fork .github/workflows/release.yml\nactive .github/workflows/cone-desktop.yml\ndisabled_manually .github/workflows/desktop-build.yml'
+states=$'disabled_manually .github/workflows/ci.yml\ndisabled_fork .github/workflows/release.yml\nactive .github/workflows/cone-desktop.yml\ndisabled_manually .github/workflows/desktop-build.yml\ndisabled_manually .github/workflows/my flow.yml'
 mkdir -p "$G/cone"; cp "$W" "$G/cone/upstream-watch.sh" # the script works in its own repository
 gw() { ( cd "$G" && printf '%s\n' "$states" | cone/upstream-watch.sh guard "$1" "$2" 2>&1 ); }
 if ( cd "$G" && printf '' | cone/upstream-watch.sh guard g-base no-such-ref >/dev/null 2>&1 ); then bad "guard stops when it cannot diff"; else ok "guard stops when it cannot diff"; fi
@@ -163,6 +166,9 @@ if out="$(gw g-base g-add)"; then bad "guard refuses an added workflow"; else ha
 if out="$(gw g-base g-change)"; then ok "guard passes a change to a disabled_manually workflow, a deletion and a non-YAML file"; else bad "guard passes a change to a disabled_manually workflow: $out"; fi
 if out="$(gw g-base g-live)"; then bad "guard refuses a changed workflow that is not disabled_manually"; else has "guard refuses a changed workflow that is not disabled_manually (disabled_fork)" "release.yml: changed, state 'disabled_fork'" "$out"; fi
 if out="$(gw g-base g-rename)"; then bad "guard refuses a renamed workflow (a new path)"; else has "guard refuses a renamed workflow (a new path)" "ci2.yml: new" "$out"; fi
+if out="$(gw g-base g-unicode)"; then bad "guard refuses an added workflow with a non-ASCII name"; else has "guard refuses an added workflow with a non-ASCII name, named as stored" "发布.yml: new" "$out"; fi
+if out="$(gw g-base g-upper)"; then bad "guard refuses an added .YML workflow"; else has "guard refuses an added .YML workflow" "Deploy.YML: new" "$out"; fi
+if out="$(gw g-base g-space)"; then ok "guard matches a workflow's state by its whole path (a name with a space)"; else bad "guard matches a workflow's state by its whole path (a name with a space): $out"; fi
 
 # --- run: the whole path up to the push, against a local upstream and a bare fork origin
 U="$T/up"; git init -q -b main "$U"

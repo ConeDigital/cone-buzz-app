@@ -95,21 +95,26 @@ workflow_states() {
 # disabled_manually may be live too (v1.0.2 turned release.yml from
 # disabled_fork to active). Both stop the update before anything is pushed.
 cmd_guard() {
-  local base="$1" head="$2" st path state bad="" changes
+  local base="$1" head="$2" st path entry state bad="" list
   local -a known=()
   while read -r state path; do [[ -n "$path" ]] && known+=("$state $path"); done
-  # a failed diff stops the update; it never reads as "no workflow changed"
-  changes="$(git diff --name-status --no-renames "$base" "$head" -- .github/workflows)" \
-    || die "cannot diff $base..$head; nothing pushed"
-  while IFS=$'\t' read -r st path; do
-    [[ "$path" =~ \.ya?ml$ ]] || continue
+  # -z: paths exactly as stored (git quotes a non-ASCII path otherwise, and
+  # "发布.yml" would end in a quote); a failed diff stops the update, it never
+  # reads as "no workflow changed"
+  list="$(mktemp)"
+  git diff --name-status --no-renames -z "$base" "$head" -- .github/workflows > "$list" \
+    || { rm -f "$list"; die "cannot diff $base..$head; nothing pushed"; }
+  while IFS= read -r -d '' st && IFS= read -r -d '' path; do
+    printf '%s\n' "$path" | grep -q -i -E '\.ya?ml$' || continue
     case "$st" in
       D) continue ;;
       A) bad+="  $path: new, GitHub has no disabled state for it"$'\n'; continue ;;
     esac
-    state="$(printf '%s\n' ${known[@]+"${known[@]}"} | awk -v p="$path" '$2 == p {print $1}')"
+    state=""
+    for entry in ${known[@]+"${known[@]}"}; do [[ "${entry#* }" == "$path" ]] && state="${entry%% *}"; done
     [[ "$state" == disabled_manually ]] || bad+="  $path: changed, state '${state:-unknown}', not disabled_manually"$'\n'
-  done <<<"$changes"
+  done < "$list"
+  rm -f "$list"
   [[ -z "$bad" ]] && return 0
   printf '%s' "$bad" >&2
   die "the merge brings the workflows above, which could run in this fork; nothing pushed — read their triggers and update by hand (cone/README.md, Upstream update)"
