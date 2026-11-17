@@ -7,7 +7,11 @@ name: Cone upstream
 # vX.Y.Z newer than cone/UPSTREAM, cone/upstream-watch.sh merges it into a
 # branch cone-update/<tag>, sets cone/UPSTREAM, re-measures the rebrand's
 # strings.tsv and opens one pull request per tag with the triage of what
-# changed. It opens it with the GitHub App cone-desktop-updater, not
+# changed. Nothing is pushed when the merge adds a workflow file or changes
+# one that is not disabled_manually: a branch push, a pull request or the
+# merge would start it, and disabling it afterwards stops no started run
+# (the run fails naming them, for a person to handle). An explicit tag must
+# be a published, non-draft, non-prerelease release. It opens it with the GitHub App cone-desktop-updater, not
 # GITHUB_TOKEN: a pull request GITHUB_TOKEN opens runs no CI, and
 # GITHUB_TOKEN may never push a change to a workflow file, which an upstream
 # merge carries. Closing the pull request skips that tag.
@@ -16,8 +20,8 @@ name: Cone upstream
 # update by hand), the `tag` job tags that commit cone-desktop-v2.<next>.0
 # with the App, which starts cone-desktop.yml's release; the build still
 # waits for the owner at cone-release, and installed apps get it only once it
-# is promoted. Then every active workflow that is not Cone's is disabled:
-# an upstream merge may add one.
+# is promoted. Then every active workflow that is not Cone's is disabled, as
+# a backstop behind the guard.
 #
 # The App's key is in the environment cone-upstream (deployments from `cone`
 # only, no reviewer); each job asks for the narrowest token it needs.
@@ -49,6 +53,9 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     environment: cone-upstream
+    permissions:
+      contents: read
+      actions: read # the guard reads which workflows are disabled; the App holds no Actions permission
     steps:
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app
@@ -80,6 +87,7 @@ jobs:
       - name: Open the update pull request
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          ACTIONS_READ_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: cone/upstream-watch.sh run "$TAG"
 

@@ -102,10 +102,19 @@ has "triage: the count" '^\*\*5 commits\*\*' "$tri"
 mkdir -p "$T/bin"
 cat > "$T/bin/gh" <<'EOF'
 #!/usr/bin/env bash
-# stub: `workflow list … --jq <f>` answers the fixture through jq <f>; `workflow disable <name>` is recorded
+# stub: `workflow list`/`release view … --jq <f>` answer their fixture through jq <f> (a
+# missing release fixture is gh's "release not found"); `pr list` finds none; `workflow
+# disable <name>` and `pr create` are recorded
+jqf() { local f=""; while (( $# )); do [[ "$1" == --jq ]] && f="$2"; shift; done; echo "$f"; }
 if [[ "$1 $2" == "workflow list" ]]; then
-  f=""; while (( $# )); do [[ "$1" == --jq ]] && f="$2"; shift; done
-  jq -r "$f" "$GH_FIXTURE"
+  jq -r "$(jqf "$@")" "$GH_FIXTURE"
+elif [[ "$1 $2" == "release view" ]]; then
+  [[ -f "${GH_RELEASE:-}" ]] || { echo "release not found" >&2; exit 1; }
+  jq -r "$(jqf "$@")" "$GH_RELEASE"
+elif [[ "$1 $2" == "pr list" ]]; then
+  :
+elif [[ "$1 $2" == "pr create" ]]; then
+  echo "pr create" >> "$GH_LOG"
 elif [[ "$1 $2" == "workflow disable" ]]; then
   echo "${@: -1}" >> "$GH_LOG"
 else
@@ -124,6 +133,91 @@ EOF
 : > "$T/disabled.log"
 PATH="$T/bin:$PATH" GH_FIXTURE="$T/workflows.json" GH_LOG="$T/disabled.log" "$W" disable-workflows >/dev/null
 eq "disable-workflows: the active upstream ones, nothing of Cone's" "cone-desktop.yml.bak desktop-new.yml" "$(sort "$T/disabled.log" | tr '\n' ' ' | sed 's/ $//')"
+
+# --- pick: an explicit tag must be a published stable release, like the newest is
+pub=$'v1.0.4\nv1.0.3\nv1.0.2'
+eq "pick: a published stable tag asked for" "v1.0.3" "$(printf '%s\n' "$pub" | "$W" pick v1.0.2 v1.0.3)"
+eq "pick: no tag asked for is the newest" "v1.0.4" "$(printf '%s\n' "$pub" | "$W" pick v1.0.2)"
+if printf '%s\n' "$pub" | "$W" pick v1.0.2 v1.0.9 >/dev/null 2>&1; then bad "pick refuses a tag with no published release"; else ok "pick refuses a tag with no published release"; fi
+if printf '' | "$W" pick v1.0.2 v1.0.3 >/dev/null 2>&1; then bad "pick refuses a draft or prerelease (not in the list)"; else ok "pick refuses a draft or prerelease (not in the list)"; fi
+if printf 'v1.0.2\n' | "$W" pick v1.0.2 v1.0.2 >/dev/null 2>&1; then bad "pick refuses a tag not newer than cone/UPSTREAM"; else ok "pick refuses a tag not newer than cone/UPSTREAM"; fi
+
+# --- guard: a workflow file the merge adds, or changes while it is not disabled_manually
+G="$T/guard"; git init -q -b cone "$G"
+(
+  cd "$G"; git config user.name test; git config user.email test@cone.digital
+  mkdir -p .github/workflows
+  for f in ci release cone-desktop desktop-build; do echo "on: push" > ".github/workflows/$f.yml"; done
+  git add -A; git commit -q -m base; git tag g-base
+  echo "on: [push, pull_request]" > .github/workflows/new.yml; git add -A; git commit -q -m add; git tag g-add
+  git reset -q --hard g-base; echo "# changed" >> .github/workflows/ci.yml; git rm -q .github/workflows/desktop-build.yml
+  echo notes > .github/workflows/README.md; git add -A; git commit -q -m change; git tag g-change
+  git reset -q --hard g-base; echo "# changed" >> .github/workflows/release.yml; git commit -qam live; git tag g-live
+  git reset -q --hard g-base; git mv .github/workflows/ci.yml .github/workflows/ci2.yml; git commit -qm rename; git tag g-rename
+)
+states=$'disabled_manually .github/workflows/ci.yml\ndisabled_fork .github/workflows/release.yml\nactive .github/workflows/cone-desktop.yml\ndisabled_manually .github/workflows/desktop-build.yml'
+mkdir -p "$G/cone"; cp "$W" "$G/cone/upstream-watch.sh" # the script works in its own repository
+gw() { ( cd "$G" && printf '%s\n' "$states" | cone/upstream-watch.sh guard "$1" "$2" 2>&1 ); }
+if ( cd "$G" && printf '' | cone/upstream-watch.sh guard g-base no-such-ref >/dev/null 2>&1 ); then bad "guard stops when it cannot diff"; else ok "guard stops when it cannot diff"; fi
+if out="$(gw g-base g-add)"; then bad "guard refuses an added workflow"; else has "guard refuses an added workflow, naming it" "new.yml: new" "$out"; fi
+if out="$(gw g-base g-change)"; then ok "guard passes a change to a disabled_manually workflow, a deletion and a non-YAML file"; else bad "guard passes a change to a disabled_manually workflow: $out"; fi
+if out="$(gw g-base g-live)"; then bad "guard refuses a changed workflow that is not disabled_manually"; else has "guard refuses a changed workflow that is not disabled_manually (disabled_fork)" "release.yml: changed, state 'disabled_fork'" "$out"; fi
+if out="$(gw g-base g-rename)"; then bad "guard refuses a renamed workflow (a new path)"; else has "guard refuses a renamed workflow (a new path)" "ci2.yml: new" "$out"; fi
+
+# --- run: the whole path up to the push, against a local upstream and a bare fork origin
+U="$T/up"; git init -q -b main "$U"
+(
+  cd "$U"; git config user.name up; git config user.email up@example.com
+  mkdir -p .github/workflows; echo a > app.txt; echo "on: push" > .github/workflows/ci.yml
+  git add -A; git commit -q -m one; git tag v1.0.0
+  echo "on: [push, pull_request]" > .github/workflows/new.yml; echo b > app.txt; git add -A; git commit -q -m two; git tag v1.0.1
+  git reset -q --hard v1.0.0; echo "# changed" >> .github/workflows/ci.yml; echo c > app.txt; git commit -qam three; git tag v1.0.2
+)
+git init -q --bare "$T/fork.git"; F="$T/fork"; git init -q -b cone "$F"
+(
+  cd "$F"; git config user.name test; git config user.email test@cone.digital
+  git fetch -q "$U" "+refs/tags/v1.0.0:refs/tags/v1.0.0"; git reset -q --hard v1.0.0
+  mkdir -p cone; cp "$W" cone/upstream-watch.sh; echo v1.0.0 > cone/UPSTREAM
+  git add -A; git commit -q -m "cone"; git tag cone-desktop-v2.3.0
+  git remote add origin "$T/fork.git"; git push -q origin cone cone-desktop-v2.3.0; git fetch -q origin
+)
+cat > "$T/bin/pnpm" <<'EOF'
+#!/usr/bin/env bash
+echo "pnpm $*" >> "$GH_LOG"
+EOF
+chmod +x "$T/bin/pnpm"
+echo '[{"path":".github/workflows/ci.yml","state":"disabled_manually"},{"path":".github/workflows/cone-upstream.yml","state":"active"}]' > "$T/states.json"
+runf() { # <tag> <release fixture or ""> → the run's output; the exit status in $T/rc
+  : > "$T/run.log"
+  ( cd "$F" && PATH="$T/bin:$PATH" CONE_UPSTREAM_URL="$U" GH_RELEASE="$2" GH_FIXTURE="$T/states.json" GH_LOG="$T/run.log" \
+      cone/upstream-watch.sh run "$1" 2>&1; echo $? > "$T/rc" )
+}
+pushed() { git -C "$T/fork.git" for-each-ref --format='%(refname:short)' 'refs/heads/cone-update/*' | tr '\n' ' ' | sed 's/ $//'; }
+# (v1.0.2 passes the workflow guard, so only the release check can stop these two)
+echo '{"tagName":"v1.0.2","isDraft":false,"isPrerelease":true}' > "$T/rel-pre.json"
+out="$(runf v1.0.2 "$T/rel-pre.json")"
+eq "run refuses an explicit tag whose release is a prerelease" "1" "$(cat "$T/rc")"
+has "… saying it is not a published stable release" "not a published, non-draft, non-prerelease" "$out"
+out="$(runf v1.0.2 "")"
+eq "run refuses an explicit tag with no release (a draft is invisible: not found)" "1" "$(cat "$T/rc")"
+eq "… and neither pushed a branch" "" "$(pushed)"
+echo '{"tagName":"v1.0.1","isDraft":false,"isPrerelease":false}' > "$T/rel-101.json"
+out="$(runf v1.0.1 "$T/rel-101.json")"
+eq "run stops when the merge adds a workflow" "1" "$(cat "$T/rc")"
+has "… naming it" "new.yml: new" "$out"
+eq "… and pushed no branch" "" "$(pushed)"
+hasnt "… and opened no pull request" "pr create" "$(cat "$T/run.log")"
+echo '{"tagName":"v1.0.2","isDraft":false,"isPrerelease":false}' > "$T/rel-102.json"
+out="$(runf v1.0.2 "$T/rel-102.json")"
+eq "run passes a change to a disabled_manually workflow" "0" "$(cat "$T/rc")"
+eq "… pushed cone-update/v1.0.2 with cone/UPSTREAM set" "v1.0.2" "$(git -C "$T/fork.git" show cone-update/v1.0.2:cone/UPSTREAM 2>/dev/null)"
+has "… and opened the pull request" "^pr create" "$(cat "$T/run.log")"
+echo '[{"path":".github/workflows/ci.yml","state":"disabled_fork"}]' > "$T/states.json"
+git -C "$F" switch -q cone; git -C "$F" branch -q -D cone-update/v1.0.2; git -C "$T/fork.git" branch -q -D cone-update/v1.0.2
+out="$(runf v1.0.2 "$T/rel-102.json")"
+has "run stops when a changed workflow is not disabled_manually" "ci.yml: changed, state 'disabled_fork'" "$out"
+hasnt "… before pnpm" "pnpm" "$(cat "$T/run.log")"
+eq "… and pushed no branch" "" "$(pushed)"
 
 echo "upstream-test: $pass passed, $fail failed"
 (( fail == 0 ))

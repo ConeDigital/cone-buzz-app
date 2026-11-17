@@ -99,7 +99,8 @@ a row or an exception with a reason.
 **The watcher does this** (`cone-buzz-infra` Slice 54, ADR-375):
 `.github/workflows/cone-upstream.yml` runs daily (05:23 UTC) and on demand
 (Actions → *Cone upstream* → *Run workflow* on `cone`, optionally with a
-tag). For each stable `block/buzz-app` release newer than `UPSTREAM` it opens
+tag, which must be a published, non-draft, non-prerelease release). For
+each stable `block/buzz-app` release newer than `UPSTREAM` it opens
 **one** pull request `Upstream vX.Y.Z (cone-desktop-v2.N.0)` from
 `cone-update/<tag>`: the tag merged, `UPSTREAM` set, `strings.tsv`
 re-measured, `rebrand.sh check`'s result and the triage of the commits
@@ -109,20 +110,28 @@ draft means the check failed: fix what it names on that branch (above).
 **Merging it tags `cone-desktop-v2.<next minor>.0`** (the `tag` job, on any
 push to `cone` that changes `UPSTREAM`), which starts the release below; the
 build still waits for the owner. Then every active workflow that is not
-Cone's is disabled. **Closing it skips that tag**; the watcher never reopens
+Cone's is disabled, a backstop. **Nothing is pushed when the merge adds a
+workflow file, or changes one that is not `disabled_manually`** (`guard`):
+the branch push, the pull request or the merge would start it, and
+disabling it afterwards stops no run that has started. The run fails
+naming them, every day until a person handles it. **Closing it skips that tag**; the watcher never reopens
 a tag that has had a pull request. It acts as the GitHub App
 `cone-desktop-updater` (key in the environment `cone-upstream`), because a
 pull request `GITHUB_TOKEN` opens runs no CI and `GITHUB_TOKEN` may not push
 an upstream merge that touches a workflow file.
 
-By hand, when the merge conflicts (the run fails naming the files) or the
-watcher is off: merge the next stable upstream tag into a branch `cone-update/<tag>` (merge,
+By hand, when the merge conflicts or brings a workflow (the run fails naming
+the files) or the watcher is off: merge the next stable upstream tag into a branch `cone-update/<tag>` (merge,
 never rebase): `git fetch upstream tag <tag> && git merge <tag>`; set
 `cone/UPSTREAM` to it, `just cone-shallow-check`, `just cone-build-env-check`,
 `just cone-rebrand-check` (fix what it names, above), build locally, then a pull request to `cone` (`gh pr create -R
-ConeDigital/cone-buzz-app`) that lists any workflow the merge adds; right
-after it merges, disable each (`gh workflow disable -R
-ConeDigital/cone-buzz-app <name>`): every upstream workflow stays disabled.
+ConeDigital/cone-buzz-app`). **Before pushing a branch that adds a workflow
+file** (or changes one that is not `disabled_manually`, `gh workflow list
+--all`), read its `on:`: push only when nothing in it fires on a branch push,
+a pull request or a push to `cone`, say why in the pull request, and right
+after it merges disable it (`gh workflow disable -R ConeDigital/cone-buzz-app
+<name>`). Otherwise that update waits: there is no safe way yet to import a
+workflow that would run (`cone-buzz-infra` Slice 54, §8).
 Re-read the trigger signals and the facts in `cone-buzz-infra`
 `docs/upstream.md` at each update.
 
