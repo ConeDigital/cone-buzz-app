@@ -9,14 +9,14 @@ crates/plugin-manager/src/access/schema.rs	1
 crates/plugin-manager/src/lib.rs	9
 crates/plugin-manager/src/main.rs	2
 crates/plugin-manager/src/managed.rs	2
-docs/buzz-help.md	157
+docs/buzz-help.md	172
 docs/plugin-authoring-guide.md	4
 huddle.html	1
 index.html	3
 public/launch-init.js	3
 src-tauri/src/app_agents.rs	6
 src-tauri/src/browser/mod.rs	4
-src-tauri/src/browser/platform.rs	4
+src-tauri/src/browser/platform.rs	6
 src-tauri/src/browser/policy.rs	2
 src-tauri/src/claude_key.rs	1
 src-tauri/src/cli_link.rs	1
@@ -76,6 +76,7 @@ src/app/shell/PageSearch.tsx	5
 src/app/shell/SearchChoices.tsx	1
 src/app/shell/SearchResults.tsx	1
 src/app/shortcuts.ts	1
+src/bundled/agents/AgentBrowse.tsx	1
 src/bundled/agents/AgentCardLink.tsx	1
 src/bundled/agents/AgentSettingsHost.tsx	1
 src/bundled/agents/AgentShareDialog.tsx	1
@@ -107,8 +108,8 @@ src/bundled/changesets/turns.ts	1
 src/bundled/channels/README.md	1
 src/bundled/channels/SoloChatMenu.tsx	1
 src/bundled/channels/manifest.json	1
-src/bundled/claude-code/README.md	2
-src/bundled/claude-code/auth.tsx	2
+src/bundled/claude-code/README.md	3
+src/bundled/claude-code/auth.tsx	3
 src/bundled/claude-code/claude.sh	6
 src/bundled/claude-code/claude.ts	1
 src/bundled/claude-code/manifest.json	1
@@ -187,6 +188,7 @@ src/features/agent-harness/acp/process.ts	4
 src/features/agent-harness/base_prompt.md	10
 src/features/agent-harness/kit.ts	2
 src/features/agent-harness/plugin-wake.ts	2
+src/features/agents/AISettings.tsx	1
 src/features/agents/AgentConnectionSetup.tsx	1
 src/features/agents/ExternalAuthorizationDialog.tsx	6
 src/features/agents/InterruptedNotice.tsx	1
@@ -251,5 +253,5 @@ src/plugins/requests.ts	2
 src/plugins/updates.ts	1
 src/shared/design-system/icons/index.ts	9
 src/shared/design-system/tokens/registry.ts	1
-src/shared/design-system/ui/registry.ts	9
+src/shared/design-system/ui/registry.ts	10
 src/shared/device-settings.ts	2
