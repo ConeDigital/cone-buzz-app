@@ -26,6 +26,7 @@ import { useReturnHighlight } from "../../features/messages/use-return-highlight
 import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { ChannelBody } from "./ChannelBody";
 import {
+  type ConversationTab,
   entryPane,
   panelTabId,
   rootOfTab,
@@ -36,6 +37,7 @@ import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { ChannelHeaderIdentity, memberAccess } from "./ChannelHeaderIdentity";
 import {
   matchesConversation,
+  newMessage,
   openEmptyChannels,
   soloDraft,
   soloDraftTarget,
@@ -381,9 +383,11 @@ function ChannelWorkspace({
   archive?: ArchiveShortcut | undefined;
   read?: ReadShortcut | undefined;
 }) {
-  const composingMessage =
-    navigation?.target.kind === "page" &&
-    navigation.target.route?.params === "new-message";
+  const messageDraft =
+    navigation?.target.kind === "page"
+      ? newMessage(navigation.target.route?.params)
+      : undefined;
+  const composingMessage = messageDraft !== undefined;
   const draftTarget = navigation?.target;
   const draft = useMemo(
     () =>
@@ -2010,6 +2014,16 @@ function ChannelWorkspace({
   const hasPanel = companion || hasChannelPanel;
   const showingChannelPanel = tabState.paneOpen && hasChannelPanel;
   const showingPanel = companion || showingChannelPanel;
+  const highlightedThread =
+    showingChannelPanel && !companion
+      ? tabState.tabs.find(
+          (tab): tab is Extract<ConversationTab, { kind: "thread" }> =>
+            tab.kind === "thread" &&
+            tabPane(tab) === "side" &&
+            tab.id === selectedTab &&
+            tab.channelId === currentId,
+        )
+      : undefined;
   // A plain channel visit reads its visible selected thread along with the
   // conversation that holds focus. A link to a message or thread, passive
   // restoration and another channel’s retained tab do not.
@@ -2326,6 +2340,9 @@ function ChannelWorkspace({
             }
             holding={contextHolding}
             inlineTarget={contextTarget}
+            openThreadRootId={
+              highlightedThread ? rootOfTab(highlightedThread) : undefined
+            }
             onOpenThread={openThread}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
@@ -2472,11 +2489,7 @@ function ChannelWorkspace({
           canOpenLink={canOpenLink}
           {...(agents ? { agents } : {})}
           onOpenLink={(url, returnFocus) => openLink(url, { returnFocus })}
-          onOpenConversation={
-            navigator && viewer
-              ? (id) => openLink(`buzz://channel/${encodeURIComponent(id)}`)
-              : undefined
-          }
+          onOpenMessage={navigator && viewer ? openLink : undefined}
         />
       )}
       <Panel
@@ -2512,6 +2525,7 @@ function ChannelWorkspace({
         >
           {composingMessage ? (
             <LiveNewMessage
+              intent={messageDraft?.intent}
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
@@ -2672,7 +2686,7 @@ function ChannelWorkspace({
                           startChat={
                             navigator &&
                             current &&
-                            canStartLinkedChat(queries, current.id) ? (
+                            canStartLinkedChat(queries) ? (
                               <StartLinkedChat
                                 session={queries}
                                 navigation={navigator}
