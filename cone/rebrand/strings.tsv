@@ -9,7 +9,7 @@ crates/plugin-manager/src/access/schema.rs	1
 crates/plugin-manager/src/lib.rs	9
 crates/plugin-manager/src/main.rs	2
 crates/plugin-manager/src/managed.rs	2
-docs/buzz-help.md	172
+docs/buzz-help.md	180
 docs/plugin-authoring-guide.md	4
 huddle.html	1
 index.html	3
@@ -36,6 +36,7 @@ src-tauri/src/jev.rs	1
 src-tauri/src/keep_awake.rs	1
 src-tauri/src/legacy_communities.rs	2
 src-tauri/src/lib.rs	5
+src-tauri/src/main.rs	2
 src-tauri/src/mouse_nav.rs	1
 src-tauri/src/notifications.rs	1
 src-tauri/src/notifications/linux.rs	1
@@ -72,9 +73,9 @@ src/app/ShortcutSettings.tsx	4
 src/app/UnreadIndicatorSettings.tsx	1
 src/app/launch.ts	1
 src/app/settings-sections.ts	1
-src/app/shell/PageSearch.tsx	5
+src/app/shell/PageSearch.tsx	6
 src/app/shell/SearchChoices.tsx	1
-src/app/shell/SearchResults.tsx	1
+src/app/shell/SearchResults.tsx	3
 src/app/shortcuts.ts	1
 src/bundled/agents/AgentBrowse.tsx	1
 src/bundled/agents/AgentCardLink.tsx	1
@@ -88,7 +89,7 @@ src/bundled/bestie/BestieTab.tsx	1
 src/bundled/bestie/FirstAgentWelcome.tsx	3
 src/bundled/bestie/PinnedBestie.tsx	3
 src/bundled/bestie/README.md	6
-src/bundled/bestie/features.ts	1
+src/bundled/bestie/features.ts	2
 src/bundled/bestie/prompt.ts	3
 src/bundled/bestie/setup.ts	2
 src/bundled/builderlab/BuilderlabSettings.tsx	1
@@ -171,7 +172,6 @@ src/bundled/pi/runtime.ts	1
 src/bundled/pi/tabs.tsx	1
 src/bundled/plugin-development/README.md	3
 src/bundled/terminal/TerminalPanel.tsx	1
-src/bundled/todos/model.ts	1
 src/bundled/typesafe/README.md	1
 src/bundled/typesafe/TypeSafeSettings.tsx	2
 src/bundled/voice-notes/useVoiceNoteRecorder.ts	3
@@ -180,10 +180,10 @@ src/bundled/watching/Tab.tsx	1
 src/bundled/workflows/README.md	1
 src/buzz-mcp/external.ts	3
 src/buzz-mcp/prompt.ts	1
-src/buzz-mcp/session-tools.ts	2
+src/buzz-mcp/session-tools.ts	3
 src/buzz-mcp/settings.ts	4
 src/buzz-mcp/solo-worker.ts	7
-src/buzz-mcp/tools.ts	7
+src/buzz-mcp/tools.ts	8
 src/features/agent-harness/acp/process.ts	4
 src/features/agent-harness/base_prompt.md	10
 src/features/agent-harness/kit.ts	2
@@ -248,6 +248,7 @@ src/features/relay/native.ts	1
 src/features/relay/outbox-storage.ts	1
 src/features/relay/read-state-storage.ts	1
 src/features/relay/transport.ts	1
+src/features/updates/UpdateAction.tsx	2
 src/features/updates/UpdateSettings.tsx	1
 src/plugins/requests.ts	2
 src/plugins/updates.ts	1
