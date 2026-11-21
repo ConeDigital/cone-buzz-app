@@ -1,3 +1,4 @@
+import { plainText } from "../../features/notifications/content";
 import { workflowOwner } from "../../features/relay/workflow-attribution";
 import {
   useCallback,
@@ -12,6 +13,9 @@ import {
   searchDebounce,
 } from "../../shared/search-debounce";
 import { objectBody } from "../../features/relay/body";
+import { imetaAttachmentUrls } from "../../features/relay/fold";
+import { projectMarkdownAttachments } from "../../features/relay/message-content";
+import type { PreviewMentions } from "../../features/messages/PreviewText";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
 import type { Profile } from "../../features/relay/contracts";
@@ -45,7 +49,74 @@ export type SearchMessage = Readonly<{
   workflowOwnerId?: string | undefined;
   createdAt: number;
   preview: string;
+  /** The searchable text, whitespace kept, for snippets and previews. */
+  text: string;
+  /** The message's signed mentions, which its chips bind. */
+  mentioned: PreviewMentions;
 }>;
+
+/** Message kinds search returns: chat, agent and diff messages. Ranked
+ * search resolves hit channels only for these (see the relay session). */
+export const SEARCH_KINDS = [9, 40002, 40008];
+
+/** An indexed event's readable text. */
+export function eventText(event: { kind: number; content: string }) {
+  if (event.kind !== 40002) return event.content;
+  const body = objectBody(event.content);
+  return typeof body?.content === "string" ? body.content : "Agent message";
+}
+
+type IndexedEvent = {
+  kind: number;
+  content: string;
+  tags: readonly (readonly string[])[];
+};
+
+/** An indexed event's body as its conversation binds it, with its images
+ * and attachment links projected out the same way. */
+function eventBody(event: IndexedEvent) {
+  const content = eventText(event);
+  const urls = imetaAttachmentUrls(event);
+  return content.includes("![") || urls.size
+    ? projectMarkdownAttachments(content, urls)
+    : { content, seams: [] };
+}
+
+/** An indexed event's text as it reads, without Markdown syntax and with
+ * spoilers hidden, for snippets and previews. It keeps the raw body, with
+ * attachment names and image markers, so a search for a file name shows it;
+ * only chips bind the projected body (`eventMentions`), and past an
+ * attachment the preview's text check leaves names as text. */
+export function searchText(event: { kind: number; content: string }) {
+  return plainText(eventText(event), { limit: 4000 });
+}
+
+/** An indexed event's body and signed mentions, read from its tags as a
+ * message reads them: `p` recipients and two-field `mention` references. A
+ * patch shows as raw text, so it binds no one. */
+export function eventMentions(event: IndexedEvent): PreviewMentions {
+  if (event.kind === 40008) return { content: eventText(event), mentions: [] };
+  const keys = (pick: (tag: readonly string[]) => boolean) => [
+    ...new Set(
+      event.tags.flatMap((tag) =>
+        pick(tag) && tag[1] && isHexPubkey(tag[1]) ? [tag[1]] : [],
+      ),
+    ),
+  ];
+  const mentions = keys(([name]) => name === "p");
+  const mentionReferences = keys(
+    (tag) => tag.length === 2 && tag[0] === "mention",
+  );
+  if (!mentions.length && !mentionReferences.length)
+    return { content: eventText(event), mentions };
+  const { content, seams } = eventBody(event);
+  return {
+    content,
+    mentions,
+    mentionReferences,
+    ...(seams.length ? { attachmentSeams: seams } : {}),
+  };
+}
 type Result = {
   owner: object;
   messages: readonly SearchMessage[];
@@ -84,7 +155,7 @@ async function readPage(
     const hitChannelId = destinations[0]?.[1];
     const hitChannel = hitChannelId && session.channels.get?.(hitChannelId);
     if (
-      ![9, 40002, 40008].includes(event.kind) ||
+      !SEARCH_KINDS.includes(event.kind) ||
       destinations.length !== 1 ||
       !hitChannelId ||
       (channelId && hitChannelId !== channelId) ||
@@ -94,13 +165,7 @@ async function readPage(
       return [];
     // Search returns original indexed events, not an auxiliary edit fold.
     // Exact navigation owns current content/deletion checks when opened.
-    const body = event.kind === 40002 ? objectBody(event.content) : undefined;
-    const text =
-      event.kind === 40002
-        ? typeof body?.content === "string"
-          ? body.content
-          : "Agent message"
-        : event.content;
+    const text = searchText(event);
     return [
       {
         id: event.id,
@@ -109,6 +174,8 @@ async function readPage(
         workflowOwnerId: workflowOwner(event, session.workflowAuthority),
         createdAt: event.created_at,
         preview: text.replace(/\s+/g, " ").trim().slice(0, 240) || "Attachment",
+        text,
+        mentioned: eventMentions(event),
       },
     ];
   });
@@ -449,7 +516,7 @@ export function useSearchMessages(
           }
         }
         const filter: ReadFilter = {
-          kinds: [9, 40002, 40008],
+          kinds: SEARCH_KINDS,
           ...(parsed.text
             ? {
                 search: parsed.text,
