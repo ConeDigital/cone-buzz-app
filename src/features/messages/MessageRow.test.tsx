@@ -1597,7 +1597,7 @@ it.each(["peer", "own"] as const)(
       ).toEqual(
         author === "own"
           ? [
-              "Mark unread",
+              "Mark as unread",
               "Copy message",
               "Send to channel",
               "Copy link",
@@ -1606,7 +1606,7 @@ it.each(["peer", "own"] as const)(
               "Report",
             ]
           : [
-              "Mark unread",
+              "Mark as unread",
               "Copy message",
               "Copy link",
               "Follow thread",
@@ -2223,11 +2223,12 @@ it("bounds reply participants and projects artwork with fallback initials", () =
     const trigger = screen.getByRole("button", {
       name: "View thread: 23 replies",
     });
+    // The newest replier (first) renders last, on top of the stack.
     expect(
       [...trigger.querySelectorAll("[title]")].map((e) =>
         e.getAttribute("title"),
       ),
-    ).toEqual(["Alice", "Brain", "p3"]);
+    ).toEqual(["p3", "Brain", "Alice"]);
     expect(trigger.querySelector("img")).toHaveAttribute(
       "src",
       "https://proxy/avatar",
@@ -3360,10 +3361,11 @@ it.each([true, false])(
   },
 );
 
-it.each(["", "Please review this.\n\n"])(
-  "places session cards outside the caption bubble and keeps message interactions (caption=%s)",
+it.each(["", "Please review "])(
+  "keeps chat links in their authored bubble with normal message interactions (caption=%s)",
   async (caption) => {
-    const content = `${caption}[Session: PR 45 fixes](buzz://channel/session-id)`;
+    const suffix = caption ? " before merge." : "";
+    const content = `${caption}[Session: PR 45 fixes](buzz://channel/session-id)${suffix}`;
     const reply = vi.fn(),
       thread = vi.fn(),
       open = vi.fn(() => true),
@@ -3388,23 +3390,16 @@ it.each(["", "Please review this.\n\n"])(
         />,
       );
       const card = screen.getByRole("link", {
-        name: "Open Chat: PR 45 fixes",
+        name: "Session: PR 45 fixes",
       });
       const bubble = container.querySelector("[class*=messageBubble]");
-      expect(card.closest("[data-solo-cards]")).not.toBeNull();
-      expect(card.closest("[class*=messageBubble]")).toBeNull();
-      if (caption) {
-        if (!bubble) throw new Error("Caption bubble missing");
-        expect(bubble).toHaveTextContent("Please review this.");
-        expect(
-          card.compareDocumentPosition(bubble) &
-            Node.DOCUMENT_POSITION_FOLLOWING,
-        ).toBeTruthy();
-      } else {
-        expect(bubble).toBeNull();
-        expect(container.querySelector("[data-bubble]")).toBeNull();
-        expect(container.querySelector("[data-own]")).toBeNull();
-      }
+      expect(card.closest("[data-solo-cards]")).toBeNull();
+      expect(card.closest("[class*=messageBubble]")).toBe(bubble);
+      expect(bubble).toHaveTextContent(
+        `${caption}Session: PR 45 fixes${suffix}`,
+      );
+      expect(container.querySelector("[data-bubble]")).not.toBeNull();
+      expect(container.querySelector("[data-own]")).not.toBeNull();
       expect(container.querySelectorAll("[data-message-id=root]")).toHaveLength(
         1,
       );
@@ -3428,7 +3423,7 @@ it.each(["", "Please review this.\n\n"])(
   },
 );
 
-it("keeps the timestamp seek action beside a detached session card", () => {
+it("keeps the timestamp seek action beside an inline chat link", () => {
   const seek = vi.fn();
   try {
     renderDom(
@@ -3449,9 +3444,9 @@ it("keeps the timestamp seek action beside a detached session card", () => {
     expect(seek).toHaveBeenCalledWith(42);
     expect(
       screen
-        .getByRole("link", { name: "Open Chat: Fix" })
+        .getByRole("link", { name: "Session: Fix" })
         .closest("[class*=messageBubble]"),
-    ).toBeNull();
+    ).not.toBeNull();
   } finally {
     cleanup();
   }
@@ -4355,8 +4350,8 @@ it.each([
   {
     claim: "shot",
     fails: false,
-    card: false,
-    listed: ["notes.txt", "shot.png"],
+    card: true,
+    listed: ["notes.txt"],
     content: "[Session: PR 45 fixes](buzz://channel/session-id)",
   },
 ])(
@@ -5380,3 +5375,124 @@ it("words a thread's draft by its replies even while an activity line hides thei
   ).toHaveTextContent(/^Draft reply$/);
   fresh.unmount();
 });
+
+it.each(["public", "agents"] as const)(
+  "marks the active thread's %s root as current and clears it on deselection",
+  (audience) => {
+    const props = {
+      row:
+        audience === "agents" ? { ...row, audience: "agents" as const } : row,
+      profile: { name: "Author" },
+      media: () => undefined,
+      onOpenLink: () => false,
+      day: false,
+      retry: undefined,
+    };
+    try {
+      const view = renderDom(<MessageRow {...props} threadOpen />);
+      const root = view.container.querySelector('[data-message-id="root"]');
+      expect(root).toHaveAttribute("aria-current", "true");
+      expect(
+        view.container.querySelectorAll('[aria-current="true"]'),
+      ).toHaveLength(1);
+      const surface = root?.matches("[data-highlight-surface]")
+        ? root
+        : root?.querySelector("[data-highlight-surface]");
+      expect(surface).toHaveAttribute("data-thread-open");
+      if (audience === "agents") {
+        const toggle = screen.getByRole("button", { name: "Author: Root" });
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+        fireEvent.click(toggle);
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        expect(root).toHaveAttribute("aria-current", "true");
+        expect(surface).toHaveAttribute("data-thread-open");
+        expect(
+          view.container.querySelectorAll('[aria-current="true"]'),
+        ).toHaveLength(1);
+      }
+      view.rerender(<MessageRow {...props} threadOpen={false} />);
+      expect(root).not.toHaveAttribute("aria-current");
+      expect(surface).not.toHaveAttribute("data-thread-open");
+    } finally {
+      cleanup();
+    }
+  },
+);
+
+it.each([true, false])(
+  "renders one timestamp for a timed forward with seeking=%s",
+  (canSeek) => {
+    const seek = vi.fn();
+    const note = "⏱ 0:21 — **Review** this cut";
+    const snapshot = {
+      id: "a".repeat(64),
+      channelId: "source",
+      authorId: "b".repeat(64),
+      authorName: "Original Author",
+      createdAt: 1,
+      content: "Copied content",
+    };
+    const view = renderMessage({
+      row: {
+        ...row,
+        content:
+          note +
+          "\n\nForwarded message from Original Author\n\n> Copied content",
+        forward: { note, snapshot },
+      },
+      ...(canSeek ? { onMediaTime: seek } : {}),
+    });
+    try {
+      expect(screen.getByText("Review").tagName).toBe("STRONG");
+      expect(view.container).toHaveTextContent("Review this cut");
+      expect(view.container).toHaveTextContent("Copied content");
+      expect(view.container.textContent?.match(/0:21/g)).toHaveLength(1);
+      expect(view.container).not.toHaveTextContent("⏱");
+      if (canSeek) {
+        fireEvent.click(screen.getByRole("button", { name: "0:21" }));
+        expect(seek).toHaveBeenCalledExactlyOnceWith(21);
+      } else {
+        expect(screen.queryByRole("button", { name: "0:21" })).toBeNull();
+        expect(screen.getByText("0:21").tagName).toBe("SPAN");
+      }
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it.each([true, false])(
+  "keeps an emoji forward note in a normal bubble with timestamp=%s",
+  (timed) => {
+    const note = timed ? "⏱ 0:21 — 👍" : "👍";
+    const snapshot = {
+      id: "a".repeat(64),
+      channelId: "source",
+      authorId: "b".repeat(64),
+      authorName: "Original Author",
+      createdAt: 1,
+      content: "Copied content",
+    };
+    const view = renderMessage({
+      row: {
+        ...row,
+        content:
+          note +
+          "\n\nForwarded message from Original Author\n\n> Copied content",
+        forward: { note, snapshot },
+      },
+    });
+    try {
+      expect(
+        view.container.querySelector('[data-emoji-only="true"]'),
+      ).toBeNull();
+      expect(screen.getAllByText("Copied content")).toHaveLength(1);
+      expect(view.container).toHaveTextContent("👍");
+      expect(view.container).not.toHaveTextContent("⏱");
+      if (timed)
+        expect(view.container.textContent?.match(/0:21/g)).toHaveLength(1);
+    } finally {
+      view.unmount();
+    }
+  },
+);

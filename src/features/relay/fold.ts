@@ -1,3 +1,4 @@
+import { readForward } from "./forwarded-message";
 import { workflowOwner } from "./workflow-attribution";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
@@ -74,7 +75,9 @@ function attachmentName(url: string): string | undefined {
   }
 }
 
-export function imetaAttachmentUrls(event: EventData): ReadonlySet<string> {
+export function imetaAttachmentUrls(event: {
+  tags: readonly (readonly string[])[];
+}): ReadonlySet<string> {
   const urls = new Set<string>();
   for (const entry of event.tags) {
     if (entry[0] !== "imeta") continue;
@@ -432,6 +435,7 @@ export function foldMessages(
         ? reply.pubkey
         : author;
     });
+    const forward = readForward({ ...event, content });
     rows.push(
       Object.freeze({
         id: event.id,
@@ -459,6 +463,7 @@ export function foldMessages(
         createdAt: event.created_at,
         createdAtMs: eventMs(event),
         content: projected.content,
+        ...(forward ? { forward } : {}),
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
         ...(agentAudience(event) ? { audience: "agents" as const } : {}),
@@ -499,7 +504,7 @@ export function foldMessages(
               }),
             }
           : {}),
-        ...(edits.length ? { edited: true as const } : {}),
+        ...(edits[0] ? { edited: true as const, editId: edits[0].id } : {}),
         ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([
           ...new Set(
