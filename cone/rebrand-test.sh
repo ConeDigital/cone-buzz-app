@@ -60,8 +60,8 @@ p3() { printf '\nexport const PLANTED_THREE = "Buzz here";\n' >> src/main.tsx; }
 case_ "Buzz string in an unlisted file" src/main.tsx "strings.tsv says 0" p3
 
 # 4. a line in a raw-imported prompt (whole text: comments and prose alike)
-p4() { printf '\nPlanted: Buzz again.\n' >> src/features/agent-harness/base_prompt.md; }
-case_ "line in a raw-imported prompt" src/features/agent-harness/base_prompt.md "in string text, strings.tsv says" p4
+p4() { printf '\nPlanted: Buzz again.\n' >> src/features/agent-harness/sections/tools.md; }
+case_ "line in a raw-imported prompt" src/features/agent-harness/sections/tools.md "in string text, strings.tsv says" p4
 
 # 5. a comment in a raw-imported launcher: what is written to disk counts too
 p5() { printf '\n# Planted: Buzz in a comment.\n' >> src/bundled/codex/codex.sh; }

@@ -15,8 +15,10 @@ import styles from "./Channels.module.css";
 export const ChannelBody = memo(function ChannelBody({
   cached,
   intro,
+  latestRequest,
   viewer,
   revealMessageId,
+  openThreadRootId,
   inlineTarget,
   marksRead,
   holding,
@@ -27,9 +29,11 @@ export const ChannelBody = memo(function ChannelBody({
   onContentReady?(channelId: string): void;
   cached: boolean;
   intro?: ReactNode;
+  latestRequest?: AbortSignal | undefined;
   viewer?: string | undefined;
   navigation?: PageNavigation | undefined;
   revealMessageId?: string | undefined;
+  openThreadRootId?: string | undefined;
   /** One exact visit to a loaded message, without a page navigation. */
   inlineTarget?: ChannelTimelineProps["inlineTarget"];
   /** False: viewing rows marks nothing read. */
@@ -123,6 +127,7 @@ export const ChannelBody = memo(function ChannelBody({
     <ConversationTimeline
       continuityKey={continuityKey}
       intro={intro}
+      latestRequest={latestRequest}
       viewer={viewer}
       window={window}
       launchPending={
@@ -134,6 +139,7 @@ export const ChannelBody = memo(function ChannelBody({
       }
       {...(onOpenThread ? { onOpenThread } : {})}
       revealMessageId={revealMessageId}
+      openThreadRootId={openThreadRootId}
       inlineTarget={inlineTarget}
       marksRead={marksRead}
       navigation={navigation}

@@ -38,7 +38,20 @@ import type {
   PageTabsProps,
   ConversationWorkspaceProps,
 } from "./contracts";
+import { PluginMarkdown, type MarkdownProps } from "../messages/PluginMarkdown";
 import type { RelaySession } from "../relay/session";
+import {
+  ChannelMembersDialog,
+  type ChannelMembersDialogProps,
+} from "../../bundled/channels/ChannelMembersDialog";
+import {
+  ChannelGeneralAccess,
+  type ChannelGeneralAccessProps,
+} from "../../bundled/channels/ChannelGeneralAccess";
+import {
+  DocumentEditor,
+  type DocumentEditorProps,
+} from "../messages/DocumentEditor";
 
 /** A Solo chat's sidebar icon: what the plugin knows about the chat, or
  * `fallback` when it has nothing to show. */
@@ -91,6 +104,14 @@ export type Conversation = {
   identityMarks: ContributionReader<IdentityMark>;
   registerIdentityMark(mark: IdentityMark): void;
   ui: {
+    /** Host member picker, with optional plugin-owned actions, settings and link. */
+    MembersDialog: ComponentType<ChannelMembersDialogProps>;
+    /** Signed General access editor with optional resource wording and policy. */
+    GeneralAccess: ComponentType<ChannelGeneralAccessProps>;
+    /** Controlled document editing with the host engine, formatting and link policy. */
+    DocumentEditor: ComponentType<DocumentEditorProps>;
+    /** Bounded document Markdown with host-owned link and image trust rules. */
+    Markdown: (props: MarkdownProps) => ReactNode;
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     /** One channel's message management, edit target and overlays for a page's
      * own `Message` rows and `Composer`, without visiting the channel. */
@@ -288,6 +309,15 @@ export class ConversationService extends Service implements Conversation {
       return Provided ? <Provided {...props} /> : null;
     };
     this.ui = {
+      MembersDialog: ChannelMembersDialog,
+      GeneralAccess: ChannelGeneralAccess,
+      DocumentEditor,
+      Markdown: (props: MarkdownProps) => (
+        <PluginMarkdown
+          {...props}
+          navigation={this.ctx.reflect.get("navigation")}
+        />
+      ),
       Thread: (props: EmbeddedThreadProps) => (
         <EmbeddedThread {...props} host={this.ctx} extensions={this} />
       ),

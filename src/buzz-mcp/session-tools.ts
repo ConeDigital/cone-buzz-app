@@ -116,7 +116,7 @@ export function sessionHint(added: readonly AddedTool[] = []) {
   const plugins = added.length
     ? " and tools from enabled plugins. Search by capability to discover specific plugin tools"
     : "";
-  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}.`;
+  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}. To answer from Buzz history, you can search again with a reformulated query or other filters when the results don't answer the question.`;
 }
 
 /** Changes when the added tools change, so a session that keeps the list it
@@ -145,6 +145,7 @@ export function turnNote(
     Pick<AgentHandle, "instructions" | "conversationInstructions">,
   channelId?: string,
   root?: string,
+  clearAbsent = false,
 ) {
   const attention = client?.attention;
   const review = !attention
@@ -156,23 +157,39 @@ export function turnNote(
         : ATTENTION_NONE;
   const notes = [
     pluginInstructions(client?.instructions?.()),
-    channelId &&
-      ownerInstructions(client?.conversationInstructions?.(channelId, root)),
+    ownerInstructions(
+      channelId
+        ? client?.conversationInstructions?.(channelId, root)
+        : undefined,
+      clearAbsent,
+    ),
     review,
   ].filter(Boolean);
   return notes.length ? notes.join("\n\n") : undefined;
 }
 
+/** A client, or what builds one when the call runs. */
+export type ClientSource =
+  | BuzzClient
+  | undefined
+  | (() => BuzzClient | undefined);
+
 /** Answers one tool call. Throws when the tool cannot run now; the message
  * is for the agent. Without a client, no tool can be called yet. `added`
- * are the tools plugins add now. */
+ * are the tools plugins add now. A builder is built again once its
+ * community's reload settles, so the call reads the new session. */
 export async function callSessionTool(
-  client: BuzzClient | undefined,
+  source: ClientSource,
   context: Context,
   name: string,
   args: Record<string, unknown>,
   added: readonly AddedTool[] = [],
 ): Promise<Reply> {
+  let client = typeof source === "function" ? source() : source;
+  if (client?.settle) {
+    await client.settle();
+    if (typeof source === "function") client = source();
+  }
   if (!client) throw new Error("Buzz is not ready yet. Try again.");
   const operation = added.find((tool) => tool.name === name && tool.operation);
   if (operation) {
