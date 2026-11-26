@@ -116,7 +116,13 @@ workflow file, or changes one that is not `disabled_manually`** (`guard`):
 the branch push, the pull request or the merge would start it, and
 disabling it afterwards stops no run that has started. The run fails
 naming them, every day until a person handles it. **Closing it skips that tag**; the watcher never reopens
-a tag that has had a pull request. It acts as the GitHub App
+a tag that has had a pull request. **A newer tag's pull request closes the
+older ones still open**, saying which supersedes them: it holds every commit
+they hold and both would tag the same version (v1.0.5 and v1.0.6 waited
+side by side in November 2026); a fix made by hand on the older branch is
+carried over by hand. It asks the logins in the environment variable
+`CONE_UPSTREAM_REVIEWERS` (comma-separated) for a review, which is what
+notifies a person. It acts as the GitHub App
 `cone-desktop-updater` (key in the environment `cone-upstream`), because a
 pull request `GITHUB_TOKEN` opens runs no CI and `GITHUB_TOKEN` may not push
 an upstream merge that touches a workflow file.
