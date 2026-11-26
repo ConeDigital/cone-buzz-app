@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for cone/upstream-watch.sh (cone-buzz-infra Slice 54, ADR-375): the
-# stable-tag choice, the next version, the tag after a merge, the triage and
-# the workflow guard. No network: `tag` runs against a local bare origin, and
+# stable-tag choice, the next version, the superseded pull requests, the tag
+# after a merge, the triage and the workflow guard. No network: `tag` runs against a local bare origin, and
 # `gh` is a stub that answers `workflow list` from a fixture through the real
 # jq with the script's own --jq filter (a mock of a reader reproduces its
 # parsing, ADR-0016).
@@ -39,6 +39,14 @@ eq "next-version after 2.1.0" "2.2.0" "$(printf 'cone-desktop-v2.0.0\ncone-deskt
 eq "next-version counts minors numerically" "2.11.0" "$(printf 'cone-desktop-v2.9.0\ncone-desktop-v2.10.0\ncone-desktop-v2.2.5\n' | "$W" next-version)"
 eq "next-version ignores 1.x, 3.x and suffixed tags" "2.2.0" "$(printf 'cone-desktop-v2.1.0\ncone-desktop-v2.5.0-rc1\ncone-desktop-v3.0.0\ncone-desktop-v1.9.0\n' | "$W" next-version)"
 if printf 'cone-desktop-v1.1.1\n' | "$W" next-version >/dev/null 2>&1; then bad "next-version refuses without a 2.x tag"; else ok "next-version refuses without a 2.x tag"; fi
+
+# --- superseded: the open update pull requests for older tags
+open_prs=$'10 cone-update/v1.0.5\n11 cone-update/v1.0.6\n7 cone-update/v1.0.10\n12 feature/x\n13 cone-update/v1.0.6-preview.1\n14 other/cone-update/v1.0.1'
+eq "superseded: only the older update pull requests" "10" "$(printf '%s\n' "$open_prs" | "$W" superseded v1.0.6 | tr '\n' ' ' | sed 's/ $//')"
+eq "superseded compares numerically (1.0.10 > 1.0.6)" "10 11" "$(printf '%s\n' "$open_prs" | "$W" superseded v1.0.10 | tr '\n' ' ' | sed 's/ $//')"
+eq "superseded: nothing older, nothing printed" "" "$(printf '%s\n' "$open_prs" | "$W" superseded v1.0.4)"
+eq "superseded skips a branch of a preview or other non-stable tag, and succeeds" "rc=0 " "$(out="$(printf '13 cone-update/v1.0.6-preview.1\n14 cone-update/main\n' | "$W" superseded v1.0.10 2>&1)"; echo "rc=$? $out")"
+if printf '%s\n' "$open_prs" | "$W" superseded main >/dev/null 2>&1; then bad "superseded refuses a tag that is not stable"; else ok "superseded refuses a tag that is not stable"; fi
 
 # --- tag: on a scratch repository with a bare origin
 T="$(mktemp -d "${TMPDIR:-/tmp}/cone-upstream-test.XXXXXX")"
@@ -103,8 +111,10 @@ mkdir -p "$T/bin"
 cat > "$T/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 # stub: `workflow list`/`release view … --jq <f>` answer their fixture through jq <f> (a
-# missing release fixture is gh's "release not found"); `pr list` finds none; `workflow
-# disable <name>` and `pr create` are recorded
+# missing release fixture is gh's "release not found"); `pr list --state open` answers
+# GH_OPEN_PRS through jq <f>, any other `pr list` finds none; `workflow disable <name>`,
+# `pr create` (with its --reviewer) and `pr close <n>` are recorded, and `pr create`
+# prints the URL of #12
 jqf() { local f=""; while (( $# )); do [[ "$1" == --jq ]] && f="$2"; shift; done; echo "$f"; }
 if [[ "$1 $2" == "workflow list" ]]; then
   jq -r "$(jqf "$@")" "$GH_FIXTURE"
@@ -112,9 +122,13 @@ elif [[ "$1 $2" == "release view" ]]; then
   [[ -f "${GH_RELEASE:-}" ]] || { echo "release not found" >&2; exit 1; }
   jq -r "$(jqf "$@")" "$GH_RELEASE"
 elif [[ "$1 $2" == "pr list" ]]; then
-  :
+  # only the open-pull-request listing answers, from its fixture through the script's filter
+  if [[ " $* " == *" --state open "* && -f "${GH_OPEN_PRS:-}" ]]; then jq -r "$(jqf "$@")" "$GH_OPEN_PRS"; fi
 elif [[ "$1 $2" == "pr create" ]]; then
-  echo "pr create" >> "$GH_LOG"
+  echo "pr create${CONE_UPSTREAM_REVIEWERS:+ reviewers}$(r=""; while (( $# )); do [[ "$1" == --reviewer ]] && r="$2"; shift; done; echo "${r:+ $r}")" >> "$GH_LOG"
+  echo "https://github.com/ConeDigital/cone-buzz-app/pull/12"
+elif [[ "$1 $2" == "pr close" ]]; then
+  echo "pr close $3" >> "$GH_LOG"
 elif [[ "$1 $2" == "workflow disable" ]]; then
   echo "${@: -1}" >> "$GH_LOG"
 else
@@ -193,9 +207,11 @@ echo "pnpm $*" >> "$GH_LOG"
 EOF
 chmod +x "$T/bin/pnpm"
 echo '[{"path":".github/workflows/ci.yml","state":"disabled_manually"},{"path":".github/workflows/cone-upstream.yml","state":"active"}]' > "$T/states.json"
+echo '[{"number":5,"headRefName":"cone-update/v1.0.1"},{"number":12,"headRefName":"cone-update/v1.0.2"},{"number":3,"headRefName":"other"}]' > "$T/open-prs.json"
 runf() { # <tag> <release fixture or ""> → the run's output; the exit status in $T/rc
   : > "$T/run.log"
   ( cd "$F" && PATH="$T/bin:$PATH" CONE_UPSTREAM_URL="$U" GH_RELEASE="$2" GH_FIXTURE="$T/states.json" GH_LOG="$T/run.log" \
+      GH_OPEN_PRS="$T/open-prs.json" CONE_UPSTREAM_REVIEWERS="owner-a,owner-b" \
       cone/upstream-watch.sh run "$1" 2>&1; echo $? > "$T/rc" )
 }
 pushed() { git -C "$T/fork.git" for-each-ref --format='%(refname:short)' 'refs/heads/cone-update/*' | tr '\n' ' ' | sed 's/ $//'; }
@@ -218,6 +234,9 @@ out="$(runf v1.0.2 "$T/rel-102.json")"
 eq "run passes a change to a disabled_manually workflow" "0" "$(cat "$T/rc")"
 eq "… pushed cone-update/v1.0.2 with cone/UPSTREAM set" "v1.0.2" "$(git -C "$T/fork.git" show cone-update/v1.0.2:cone/UPSTREAM 2>/dev/null)"
 has "… and opened the pull request" "^pr create" "$(cat "$T/run.log")"
+has "… asking the reviewers for a review" "^pr create reviewers owner-a,owner-b$" "$(cat "$T/run.log")"
+eq "… and closed the older update pull request, nothing else" "pr close 5" "$(grep '^pr close' "$T/run.log")"
+has "… saying so" "closed #5, superseded by #12" "$out"
 echo '[{"path":".github/workflows/ci.yml","state":"disabled_fork"}]' > "$T/states.json"
 git -C "$F" switch -q cone; git -C "$F" branch -q -D cone-update/v1.0.2; git -C "$T/fork.git" branch -q -D cone-update/v1.0.2
 out="$(runf v1.0.2 "$T/rel-102.json")"

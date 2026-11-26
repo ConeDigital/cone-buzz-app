@@ -16,11 +16,17 @@
 #   guard <base> <head>    stdin: "<state> <path>" per workflow GitHub knows; dies when <base>..<head>
 #                          adds a workflow file or changes one that is not disabled_manually
 #   next-version           stdin: this fork's tag names; prints the next minor 2.Y.0
+#   superseded <tag>       stdin: "<number> <head branch>" per open pull request; prints the numbers
+#                          of the update pull requests (cone-update/vX.Y.Z) for tags older than <tag>
 #   triage <old> <new>     the pull request's body sections, from git log <old>..<new>
 #
 # The update is a merge of the upstream tag into a branch cone-update/<tag>
 # (cone/README.md, "Upstream update"), cone/UPSTREAM set to it and strings.tsv
-# re-measured; the pull request's own CI runs every check. Nothing is pushed
+# re-measured; the pull request's own CI runs every check. A newer tag's pull
+# request closes the older ones still open (it holds every commit they hold,
+# and both would tag the same version), so one update waits at a time; it
+# asks CONE_UPSTREAM_REVIEWERS (comma-separated logins) for a review, which
+# is what notifies a person. Nothing is pushed
 # when the merge brings a workflow that could run here (`guard`): a branch
 # push, a pull request or the merge itself starts any workflow file GitHub
 # has not been told is disabled, and disabling it afterwards stops no run
@@ -88,6 +94,18 @@ published_stable() {
 workflow_states() {
   GH_TOKEN="${ACTIONS_READ_TOKEN:-${GH_TOKEN:-}}" \
     gh workflow list -R "$FORK_REPO" --all --limit 200 --json path,state --jq '.[] | "\(.state) \(.path)"'
+}
+
+cmd_superseded() {
+  local tag="$1" n head t
+  [[ "$tag" =~ $STABLE_RE ]] || die "'$tag' is not a stable tag vX.Y.Z"
+  while read -r n head; do
+    [[ "$n" =~ ^[0-9]+$ && "$head" == cone-update/* ]] || continue
+    t="${head#cone-update/}"
+    [[ "$t" =~ $STABLE_RE ]] || continue
+    semver_gt "$tag" "$t" && echo "$n"
+  done
+  return 0
 }
 
 # A workflow file the merge adds has no state yet, so it runs on the branch
@@ -234,10 +252,19 @@ cmd_run() {
   } > "$body"
 
   git push --force origin "$branch"
-  local draft=()
+  local draft=() reviewers=() url number old
   (( check_ok )) || draft=(--draft)
-  gh pr create -R "$FORK_REPO" --base cone --head "$branch" ${draft[@]+"${draft[@]}"} \
-    --title "Upstream $tag (cone-desktop-v$next)" --body-file "$body"
+  [[ -z "${CONE_UPSTREAM_REVIEWERS:-}" ]] || reviewers=(--reviewer "$CONE_UPSTREAM_REVIEWERS")
+  url="$(gh pr create -R "$FORK_REPO" --base cone --head "$branch" ${draft[@]+"${draft[@]}"} ${reviewers[@]+"${reviewers[@]}"} \
+    --title "Upstream $tag (cone-desktop-v$next)" --body-file "$body")"
+  echo "$url"
+  number="${url##*/}"
+  [[ "$number" =~ ^[0-9]+$ ]] || die "gh pr create printed '$url', not a pull request URL"
+  for old in $(gh pr list -R "$FORK_REPO" --base cone --state open --limit 100 --json number,headRefName \
+      --jq '.[] | "\(.number) \(.headRefName)"' | cmd_superseded "$tag"); do
+    gh pr close "$old" -R "$FORK_REPO" --comment "Superseded by #$number: $tag holds every commit this pull request holds, and both would tag the same version. If this branch carries a fix made by hand, carry it to #$number."
+    echo "upstream-watch: closed #$old, superseded by #$number"
+  done
 }
 
 cmd_tag() {
@@ -269,9 +296,10 @@ case "${1:-}" in
   pick) cmd_pick "${2:?current tag}" "${3:-}" ;;
   guard) cmd_guard "${2:?base}" "${3:?head}" ;;
   next-version) cmd_next_version ;;
+  superseded) cmd_superseded "${2:?tag}" ;;
   triage) cmd_triage "${2:?old}" "${3:?new}" ;;
   run) cmd_run "${2:-}" ;;
   tag) cmd_tag "${2:?before}" "${3:?after}" ;;
   disable-workflows) cmd_disable_workflows ;;
-  *) die "usage: cone/upstream-watch.sh newest|pick|guard|next-version|triage|run|tag|disable-workflows" ;;
+  *) die "usage: cone/upstream-watch.sh newest|pick|guard|next-version|superseded|triage|run|tag|disable-workflows" ;;
 esac
