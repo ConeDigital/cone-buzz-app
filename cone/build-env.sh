@@ -50,3 +50,25 @@ cone_build_env() { # refuse env files, clear every BUZZ_* variable, then load co
     || { echo "cone_build_env: the updater needs cone/updater.pub and BUZZ_UPDATER_ENDPOINT in cone/build.env" >&2; return 1; }
   export BUZZ_UPDATER_PUBLIC_KEY
 }
+
+# The --config deltas every Cone build passes after cone/tauri.cone.conf.json,
+# shared by the macOS recipe (cone.just cone-desktop-build) and the Windows
+# build (cone/windows-build.sh) so the platforms cannot drift (cone-buzz-infra
+# Slice 38 decision 4). Each writes one file outside the tree; call
+# cone_build_env first.
+
+cone_release_delta() { # <file> <version> <true|false>: the version and the updater, as upstream's scripts/candidate-version.mjs
+  # RFC 7396 replaces any endpoints array; the same key and endpoint build.rs
+  # compiles in. The third argument is createUpdaterArtifacts: true only with
+  # the updater's private key in the environment (a release).
+  [[ -n "${BUZZ_UPDATER_PUBLIC_KEY:-}" && -n "${BUZZ_UPDATER_ENDPOINT:-}" ]] \
+    || { echo "cone_release_delta: no updater key or endpoint; call cone_build_env first" >&2; return 1; }
+  node -e 'const [file, version, pubkey, endpoint, artifacts] = process.argv.slice(1);
+    require("fs").writeFileSync(file, JSON.stringify({ version, bundle: { createUpdaterArtifacts: artifacts === "true" },
+      plugins: { updater: { pubkey, endpoints: [endpoint] } } }, null, 2) + "\n");' \
+    "$1" "$2" "$BUZZ_UPDATER_PUBLIC_KEY" "$BUZZ_UPDATER_ENDPOINT" "$3"
+}
+
+cone_window_delta() { # <target triple> <file>: upstream's windows for that platform, titled Cone (cone/rebrand/transform.mjs)
+  node cone/rebrand/transform.mjs window-delta "$1" > "$2"
+}
