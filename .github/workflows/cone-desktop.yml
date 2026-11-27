@@ -1,44 +1,65 @@
 name: Cone Desktop
 
 # The Cone Desktop on Buzz 1.0 (cone-buzz-infra
-# slices/48-cone-desktop-on-buzz-app.md, ADR-340 as amended by ADR-353).
+# slices/48-cone-desktop-on-buzz-app.md, ADR-340 as amended by ADR-353, and
+# for Windows ADR-492).
 #
 # Every pull request to `cone` and every push to it proves the fork shallow
 # (criterion 2) and the build's configuration exactly cone/build.env, and runs
-# the release scripts' tests.
+# the release scripts' tests, the signing script's and this workflow's gating
+# test (cone/workflow-test.mjs).
 #
 # A tag cone-desktop-vX.Y.Z on `cone` builds Apple silicon and Intel with
 # `just cone-desktop-build`, signs the app and every executable it bundles
 # with Cone's Developer ID (cone/sign-nested.sh for the helpers Tauri leaves
-# unsigned), notarizes and staples the app and the DMG, and publishes both
-# DMGs as a GitHub Release with the updater archive of each, made again from
-# the stapled app and signed with the updater key (cone/updater-archive.sh).
+# unsigned), notarizes and staples the app and the DMG; and builds the Windows
+# x86_64 NSIS installer (job build-windows), Authenticode-signed inside
+# Tauri's build by Azure Artifact Signing over GitHub OIDC
+# (cone/windows-sign.sh), with its updater signature written over the signed
+# installer. Then it publishes all three as one GitHub Release: both DMGs with
+# the updater archive of each, made again from the stapled app and signed with
+# the updater key (cone/updater-archive.sh), and the installer with its .sig.
+# A release missing any platform is not published.
 #
 # A release reaches installed apps only when it is promoted: a
 # workflow_dispatch with `promote` set to its tag verifies the release's
-# archives against cone/updater.pub, writes latest.json and uploads it to the
-# bucket object 2/latest.json behind
-# https://buzz.cone.digital/desktop/2/latest.json. The old app's feed (the
-# bucket root's latest.json, /desktop/latest.json) is never written, and its
-# bytes are compared before and after (criterion 4).
+# archives and installer against cone/updater.pub, writes latest.json with
+# exactly darwin-aarch64, darwin-x86_64 and windows-x86_64, and uploads it to
+# the bucket object 2/latest.json behind
+# https://buzz.cone.digital/desktop/2/latest.json, refusing to drop a platform
+# the feed has (cone/promote-check.sh). The old app's feed (the bucket root's
+# latest.json, /desktop/latest.json) is never written, and its bytes are
+# compared before and after (criterion 4). The feed's credential is read from
+# the CONE_FEED_R2_* names only (decision W9: an older tag's promote, which
+# writes two platforms, finds no credential under the names it reads).
 #
 # Apple can take hours (Slice 29 defect 225), so a release is resumable: each
-# build's state is saved as two artifacts in every run, and when Apple is
+# macOS build's state is saved as two artifacts in every run, and when Apple is
 # still working at the deadline the run ends with the command that resumes it
-# (cone/release-advance.sh).
+# (cone/release-advance.sh). A resume carries the Windows installer over from
+# the run it resumes (job windows-resume); it never rebuilds or re-signs it.
 #
 # Every secret is in the environment cone-release: deployments only from
 # cone-desktop-v* tags, the owner a required reviewer, so each run — a resume
 # too — waits for the owner's approval. A dispatch from a branch is refused
 # there (criterion 3). Every upstream workflow stays disabled in this fork.
 #
+# The sign probe (merge 3b's step 0): a tag cone-desktop-v0.0.0-signprobe.N
+# runs the job sign-probe and nothing else — in cone-release, so it can reach
+# the signing identity — which signs two small test executables through
+# cone/windows-sign.sh, the second after GitHub's OIDC assertion has expired,
+# and verifies both. Every job that builds, releases or promotes refuses such
+# a ref in its own condition (cone/workflow-test.mjs proves it).
+#
 # The Windows check (cone-buzz-infra Slice 38, merge 3a of Slice 48): a
 # dispatch with `windows_check` set to a version builds an unsigned Windows
 # x86_64 NSIS installer of that version on windows-2025, from any branch, with
 # no environment and no secret — the rebrand's mutation test and check on
-# Windows, cone/windows-build.sh, a silent install on the runner checked for
-# Cone's name, publisher, version, identifier, helpers and updater — and keeps
-# it 7 days as the artifact cone-desktop-windows-x64-unsigned.
+# Windows, cone/windows-build.sh's compile and bundle, a silent install on the
+# runner checked for Cone's name, publisher, version, identifier, helpers and
+# updater (cone/windows-install-check.ps1) — and keeps it 7 days as the
+# artifact cone-desktop-windows-x64-unsigned. It is the release's Windows
+# build without the signature: the same two phases, the same checks.
 
 on:
   pull_request:
@@ -81,7 +102,8 @@ permissions:
 jobs:
   shallow:
     name: Shallow fork
-    if: github.event_name != 'workflow_dispatch'
+    # Not for a sign probe's tag: it builds nothing, so nothing needs it.
+    if: github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/cone-desktop-v0.0.0-signprobe.')
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
@@ -117,6 +139,15 @@ jobs:
 
       - name: cone-upstream-test
         run: just cone-upstream-test
+
+      # The Windows signing script against mocks (the real signing is the
+      # sign probe's and build-windows'), and this workflow's gating: which
+      # jobs run for which event and ref, the probe tag's above all.
+      - name: cone-sign-test
+        run: just cone-sign-test
+
+      - name: cone-workflow-test
+        run: just cone-workflow-test
 
       # The in-app rebrand (cone-buzz-infra Slice 51, ADR-364): the
       # transform's mutation test, then the exact check with the transformed
@@ -220,148 +251,18 @@ jobs:
       - name: cone-rebrand-check
         run: cone/rebrand.sh check
 
-      - name: Build the NSIS installer (cone/windows-build.sh)
-        run: cone/windows-build.sh "$VERSION"
+      # The release's two phases (build-windows), unsigned: the compile, then
+      # the bundle on the restored tree.
+      - name: Compile (cone/windows-build.sh compile)
+        run: cone/windows-build.sh compile "$VERSION"
+      - name: Bundle the NSIS installer, unsigned (cone/windows-build.sh bundle)
+        run: cone/windows-build.sh bundle "$VERSION"
 
-      # What a person gets: the installer run silently into a scratch folder
-      # of this disposable runner, as upstream checks its own, and every Cone
-      # setting read back from what it wrote. Then the uninstaller.
+      # What a person gets: the installer run silently on this disposable
+      # runner and every Cone setting read back, then the uninstaller.
       - name: Install on the runner and verify
         shell: pwsh
-        run: |
-          $fail = [System.Collections.Generic.List[string]]::new()
-          function Check([bool] $ok, [string] $what) {
-            if ($ok) { Write-Output "ok   $what" } else { Write-Output "FAIL $what"; $fail.Add($what) }
-          }
-          $cone = Get-Content cone/tauri.cone.conf.json -Raw | ConvertFrom-Json
-          $product = $cone.productName
-          $identifier = $cone.identifier
-          $publisher = (Get-Content cone/tauri.cone.windows.conf.json -Raw | ConvertFrom-Json).bundle.publisher
-          $pubkey = (Get-Content cone/updater.pub -Raw) -replace '\s', ''
-          $endpoint = (Select-String -Path cone/build.env -Pattern '^BUZZ_UPDATER_ENDPOINT=(.+)$').Matches.Groups[1].Value
-          $installer = (Resolve-Path "target/release/bundle/nsis/${product}_$($env:VERSION)_x64-setup.exe").Path
-          $dest = Join-Path $env:RUNNER_TEMP 'cone-install'
-          # The Cone icon, frame for frame, in the setup exe (installerIcon in
-          # cone/tauri.cone.windows.conf.json; NSIS's generic icon otherwise)
-          # and in the app (bundle.icon): each .ico frame is a PNG copied
-          # into the PE's icon resources byte for byte.
-          $ico = [IO.File]::ReadAllBytes((Resolve-Path cone/icons/icon.ico).Path)
-          $frames = @(for ($i = 0; $i -lt [BitConverter]::ToUInt16($ico, 4); $i++) {
-            $size = if ($ico[6 + 16 * $i] -eq 0) { 256 } else { $ico[6 + 16 * $i] }
-            $length = [BitConverter]::ToInt32($ico, 6 + 16 * $i + 8); $offset = [BitConverter]::ToInt32($ico, 6 + 16 * $i + 12)
-            [pscustomobject]@{ Size = $size; Text = [Text.Encoding]::Latin1.GetString($ico, $offset, $length) }
-          })
-          $setup = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($installer))
-          $found = @($frames | Where-Object { $setup.Contains($_.Text) } | ForEach-Object Size)
-          Check ($found -contains 256) "the setup exe carries cone/icons/icon.ico (frames found: $($found -join ', ') px)"
-
-          # NSIS /D must be last and unquoted.
-          $process = Start-Process $installer -ArgumentList "/S /D=$dest" -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "the installer exited $($process.ExitCode)" }
-
-          Write-Output "== What the installer laid down in $dest"
-          Get-ChildItem $dest -Recurse -File | Sort-Object FullName | ForEach-Object {
-            '{0,12}  {1}' -f $_.Length, $_.FullName.Substring($dest.Length + 1)
-          }
-
-          # For the signed release: Tauri signs a bundled .exe only when it is
-          # not signed already, so a helper someone else signed keeps that
-          # signature. Information only.
-          Write-Output "== Authenticode signatures (information only)"
-          Get-ChildItem $dest -Recurse -Include *.exe, *.dll | Sort-Object FullName | ForEach-Object {
-            $sig = Get-AuthenticodeSignature $_.FullName
-            '{0,-14} {1}  {2}' -f $sig.Status, $_.FullName.Substring($dest.Length + 1), $(if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' })
-          }
-
-          Write-Output "== The files"
-          $exe = Join-Path $dest 'Buzz.exe'
-          Check (Test-Path $exe) "the app is Buzz.exe (upstream's Cargo binary name, as Contents/MacOS/Buzz on a Mac)"
-          Check (Test-Path (Join-Path $dest 'uninstall.exe')) "uninstall.exe"
-          foreach ($bin in @('buzz.exe', 'goose-acp.exe', 'buzz-agent-command.exe')) {
-            Check (Test-Path (Join-Path $dest "bin\$bin")) "bin\$bin"
-          }
-          & (Join-Path $dest 'bin\buzz.exe') --help | Out-Null
-          Check ($LASTEXITCODE -eq 0) "bin\buzz.exe --help runs"
-
-          Write-Output "== Apps & features (the uninstall entry)"
-          $uninstall = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$product"
-          $entry = Get-ItemProperty -LiteralPath $uninstall -ErrorAction SilentlyContinue
-          if ($entry) { $entry | Select-Object DisplayName, Publisher, DisplayVersion, InstallLocation, DisplayIcon, UninstallString, MainBinaryName | Format-List | Out-String | Write-Output }
-          Check ($entry.DisplayName -eq $product) "product name '$($entry.DisplayName)' is '$product'"
-          Check ($entry.Publisher -eq $publisher) "publisher '$($entry.Publisher)' is '$publisher'"
-          Check ($entry.DisplayVersion -eq $env:VERSION) "version '$($entry.DisplayVersion)' is '$($env:VERSION)'"
-          foreach ($block in @('Buzz Foundation', 'Buzz')) {
-            Check (-not (Test-Path -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$block")) "no uninstall entry '$block' (upstream's Windows product name lost to Cone's)"
-          }
-
-          Write-Output "== The identifier and the buzz:// scheme"
-          $scheme = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Classes\buzz' -ErrorAction SilentlyContinue).'(default)'
-          $open = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Classes\buzz\shell\open\command' -ErrorAction SilentlyContinue).'(default)'
-          Check ($scheme -eq "URL:$identifier protocol") "the scheme is '$scheme' (the bundle identifier $identifier)"
-          Check ($open -eq "`"$exe`" `"%1`"") "buzz:// opens $open"
-
-          Write-Output "== Shortcuts and PATH"
-          $shell = New-Object -ComObject WScript.Shell
-          foreach ($folder in @('Programs', 'Desktop')) {
-            $lnk = Join-Path ([Environment]::GetFolderPath($folder)) "$product.lnk"
-            $target = if (Test-Path $lnk) { $shell.CreateShortcut($lnk).TargetPath } else { '<absent>' }
-            Check ($target -eq $exe) "$folder\$product.lnk -> $target"
-          }
-          $userPath = (Get-ItemProperty HKCU:\Environment).Path -split ';'
-          # The merge of Cone's deltas kept upstream's bundle.windows.nsis.installerHooks.
-          Check ($userPath -contains (Join-Path $dest 'bin')) "the user PATH has $dest\bin (upstream's installerHooks ran)"
-
-          Write-Output "== The executable"
-          (Get-Item $exe).VersionInfo | Select-Object ProductName, FileDescription, CompanyName, ProductVersion, FileVersion, LegalCopyright, OriginalFilename | Format-List | Out-String | Write-Output
-          Check ((Get-Item $exe).VersionInfo.ProductName -eq $product) "its version resource names $product"
-          $binary = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($exe))
-          $found = @($frames | Where-Object { $binary.Contains($_.Text) } | ForEach-Object Size)
-          Check ($found -contains 256) "Buzz.exe carries cone/icons/icon.ico (frames found: $($found -join ', ') px)"
-          Check ($binary.Contains($pubkey)) "cone/updater.pub's key is compiled in"
-          # The x86_64 compiler may store a short literal as 8-byte immediates
-          # (Slice 29 defect 237): the whole URL, or else every 8-byte piece of it.
-          if ($binary.Contains($endpoint)) {
-            Check $true "the feed $endpoint is compiled in, whole"
-          } else {
-            $pieces = @(for ($i = 0; $i + 8 -le $endpoint.Length; $i += 8) { $endpoint.Substring($i, 8) }) + $endpoint.Substring($endpoint.Length - 8)
-            $missing = @($pieces | Where-Object { -not $binary.Contains($_) })
-            Check ($missing.Count -eq 0) "the feed $endpoint is compiled in, in 8-byte pieces (missing: $($missing -join ', '))"
-          }
-          Check ($binary.Contains('Could not fetch a valid release JSON from the remote')) "the updater plugin is linked (build.rs saw the key and the feed)"
-          Check (-not ($binary -match 'github\.com/block/buzz(-app)?/releases')) "no Block update endpoint"
-          Write-Output "info: the identifier $identifier appears in Buzz.exe whole: $($binary.Contains($identifier))"
-
-          # A first start, for the record only: the app's data folders follow
-          # the identifier. A runner may not show a window; nothing fails here.
-          Write-Output "== A first start (information only)"
-          $app = Start-Process $exe -PassThru
-          Start-Sleep -Seconds 30
-          Write-Output "running after 30 s: $(-not $app.HasExited)"
-          foreach ($dir in @("$env:APPDATA\$identifier", "$env:LOCALAPPDATA\$identifier", "$env:APPDATA\xyz.block.buzz.desktop", "$env:LOCALAPPDATA\xyz.block.buzz.desktop", "$env:USERPROFILE\.buzz")) {
-            Write-Output "$dir exists: $(Test-Path $dir)"
-          }
-          Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($dest, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object {
-            Write-Output "stopping $($_.Path)"
-            Stop-Process -Id $_.Id -Force
-          }
-          Start-Sleep -Seconds 5
-
-          Write-Output "== The uninstaller"
-          # _?= runs it in place and waits (NSIS otherwise copies it and returns).
-          $process = Start-Process (Join-Path $dest 'uninstall.exe') -ArgumentList "/S _?=$dest" -Wait -PassThru
-          Check ($process.ExitCode -eq 0) "uninstall.exe /S exited $($process.ExitCode)"
-          Check (-not (Test-Path $exe)) "Buzz.exe removed"
-          Check (-not (Test-Path -LiteralPath $uninstall)) "the uninstall entry removed"
-          Check (-not (Test-Path -LiteralPath 'HKCU:\Software\Classes\buzz')) "the buzz:// scheme removed"
-          Check (-not (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) "$product.lnk"))) "the Start menu shortcut removed"
-          $userPath = (Get-ItemProperty HKCU:\Environment).Path -split ';'
-          Check (-not ($userPath -contains (Join-Path $dest 'bin'))) "the user PATH entry removed"
-          # _?= keeps the uninstaller (and so its folder); nothing else may stay.
-          $left = @(Get-ChildItem $dest -Recurse -File | ForEach-Object { $_.FullName.Substring($dest.Length + 1) })
-          Check (($left.Count -eq 1) -and ($left[0] -eq 'uninstall.exe')) "the install folder holds only uninstall.exe (left: $($left -join ', '))"
-
-          if ($fail.Count -gt 0) { throw "$($fail.Count) check(s) failed: $($fail -join '; ')" }
-          Write-Output "verify: all checks passed"
+        run: ./cone/windows-install-check.ps1 -Version $env:VERSION
 
       - name: Stage the installer and its checksum
         run: |
@@ -379,11 +280,117 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Merge 3b's step 0 (decision W7): the signing identity proven on two small
+  # test executables before anything is built with it. Only a tag
+  # cone-desktop-v0.0.0-signprobe.N runs it — the environment admits
+  # cone-desktop-v* tags alone, and such a tag builds, releases and promotes
+  # nothing (each of those jobs refuses the ref itself). The order is the
+  # release's: the signing inputs, azure/login, the token cached at once,
+  # then cone/windows-sign.sh signing with the delta Tauri would get. The
+  # second file is signed after GitHub's assertion has expired, from the
+  # cached token alone: what a slow bundle would need. It prints the signer,
+  # its issuer, the timestamp authority and the lifetimes, nothing secret.
+  sign-probe:
+    name: Sign probe
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cone-desktop-v0.0.0-signprobe.')
+    runs-on: windows-2025
+    environment: cone-release
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write # azure/login's GitHub OIDC assertion: this job and build-windows alone
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out with the commit's line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The probe tag
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^cone-desktop-v0\.0\.0-signprobe\.[0-9]+$ ]] \
+            || { echo "::error::'$GITHUB_REF_NAME' is not a sign probe tag cone-desktop-v0.0.0-signprobe.N"; exit 1; }
+          echo "sign probe $GITHUB_REF_NAME at $GITHUB_SHA; node $(node --version), $(az version --query '"azure-cli"' --output tsv | tr -d '\r') (Azure CLI)"
+
+      - name: Signing inputs (cone/windows-sign.sh prepare)
+        env:
+          CONE_SIGN_ENDPOINT: ${{ secrets.CONE_SIGN_ENDPOINT }}
+          CONE_SIGN_ACCOUNT: ${{ secrets.CONE_SIGN_ACCOUNT }}
+          CONE_SIGN_PROFILE: ${{ secrets.CONE_SIGN_PROFILE }}
+        run: cone/windows-sign.sh prepare "$RUNNER_TEMP/cone-sign"
+
+      # Two copies of one small program, built outside the repository (its
+      # rust-toolchain.toml is not needed for this), proven unsigned first.
+      - name: Two unsigned test executables
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          printf 'fn main() { println!("cone sign probe"); }\n' > cone-sign-probe.rs
+          rustc -O cone-sign-probe.rs -o cone-sign-probe-1.exe
+          cp cone-sign-probe-1.exe cone-sign-probe-2.exe
+          signtool="$(cygpath -u "$(cat cone-sign/signtool.path)")"
+          for f in cone-sign-probe-1.exe cone-sign-probe-2.exe; do
+            if MSYS_NO_PATHCONV=1 "$signtool" verify /pa "$f" >/dev/null 2>&1; then echo "::error::$f is signed already"; exit 1; fi
+            echo "$f: $(stat -c %s "$f") bytes, unsigned, runs: $("./$f")"
+          done
+
+      # How long the assertion azure/login is about to exchange lives: the
+      # window in which the signing token must be fetched.
+      - name: The OIDC assertion's lifetime
+        id: oidc
+        run: cone/windows-sign.sh oidc-lifetime
+
+      - name: Azure sign-in over GitHub OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: The signing token, cached while the assertion is fresh
+        run: cone/windows-sign.sh token
+
+      - name: Sign the first at once
+        run: |
+          set -euo pipefail
+          echo "SIGNED_1=$(date +%s)" >> "$GITHUB_ENV"
+          cone/windows-sign.sh sign "$RUNNER_TEMP/cone-sign" "$RUNNER_TEMP/cone-sign-probe-1.exe"
+
+      # Past the assertion's measured lifetime plus two minutes: the dlib
+      # now gets its token from the Azure CLI's cache or not at all.
+      - name: Sign the second after the assertion has expired
+        env:
+          LIFETIME: ${{ steps.oidc.outputs.lifetime }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$LIFETIME" =~ ^[0-9]+$ ]] || (( LIFETIME > 1200 )); then echo "::error::lifetime '$LIFETIME' not measured, or over 20 minutes"; exit 1; fi
+          wait=$(( SIGNED_1 + LIFETIME + 120 - $(date +%s) ))
+          if (( wait > 0 )); then echo "waiting $wait s"; sleep "$wait"; fi
+          echo "$(( $(date +%s) - SIGNED_1 )) s after the first signature:"
+          cone/windows-sign.sh sign "$RUNNER_TEMP/cone-sign" "$RUNNER_TEMP/cone-sign-probe-2.exe"
+
+      - name: Sign out of Azure
+        if: always()
+        run: az logout >/dev/null 2>&1 || true; az account clear >/dev/null 2>&1 || true
+
+      - name: Verify both (signtool and Get-AuthenticodeSignature)
+        shell: pwsh
+        run: |
+          $publisher = (Get-Content cone/tauri.cone.windows.conf.json -Raw | ConvertFrom-Json).bundle.publisher
+          $files = @(1, 2 | ForEach-Object { Join-Path $env:RUNNER_TEMP "cone-sign-probe-$_.exe" })
+          & ./cone/windows-signature-check.ps1 -SignTool (Get-Content "$env:RUNNER_TEMP/cone-sign/signtool.path" -Raw).Trim() -Publisher $publisher -Path $files
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $files | ForEach-Object { Write-Output "$(Split-Path $_ -Leaf) runs signed: $(& $_)" }
+
   build:
     name: Build ${{ matrix.target }}
     needs: shallow
     if: >-
       always() &&
+      !startsWith(github.ref, 'refs/tags/cone-desktop-v0.0.0-signprobe.') &&
       ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cone-desktop-v') && needs.shallow.result == 'success') ||
        (github.event_name == 'workflow_dispatch' && inputs.resume_run_id != '' && inputs.promote == '' && inputs.windows_check == ''))
     runs-on: macos-latest
@@ -430,6 +437,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/tags/cone-desktop-v* ]] || { echo "::error::releases build from cone-desktop-v* tags only, not $GITHUB_REF"; exit 1; }
+          [[ "$GITHUB_REF" != refs/tags/cone-desktop-v0.0.0-signprobe.* ]] || { echo "::error::$GITHUB_REF_NAME is a sign probe: it builds nothing"; exit 1; }
           VERSION="${GITHUB_REF_NAME#cone-desktop-v}"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::'$VERSION' is not SemVer"; exit 1; }
           git merge-base --is-ancestor "$GITHUB_SHA" origin/cone || { echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on cone"; exit 1; }
@@ -688,18 +696,221 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  release:
-    name: GitHub Release
-    needs: build
-    # always(): a resume skips `shallow` by design, and a job whose ancestor
-    # was skipped is skipped too unless its condition says otherwise — the
-    # 2.1.0 resume notarized both builds and published nothing (Slice 51).
-    # needs.build.result is 'success' only when every matrix target succeeded.
+  # The signed Windows x86_64 installer (decisions W4, W5, W7): windows-check's
+  # steps with Cone's Authenticode signature and the updater's .sig. GitHub's
+  # OIDC assertion lives minutes and the Azure CLI cannot renew it, so the
+  # build is two phases with the sign-in between them: the compile (half an
+  # hour cold) needs no Azure; azure/login runs right after it, the signing
+  # token is fetched and cached at once (valid an hour or more), and Tauri's
+  # bundle then signs Buzz.exe, the bin\ helpers, the NSIS plugins, the
+  # uninstaller and the installer through cone/windows-sign.sh's
+  # signCommand, and writes the installer's .sig over the signed file.
+  # Nothing is trusted: after a silent install every installed executable is
+  # verified (cone/windows-install-check.ps1 -Signed).
+  build-windows:
+    name: Build Windows x64 (signed)
+    needs: shallow
     if: >-
-      always() && needs.build.result == 'success' &&
-      startsWith(github.ref, 'refs/tags/cone-desktop-v')
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cone-desktop-v') &&
+      !startsWith(github.ref, 'refs/tags/cone-desktop-v0.0.0-signprobe.')
+    runs-on: windows-2025
+    environment: cone-release
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write # azure/login's GitHub OIDC assertion: this job and sign-probe alone
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Check out with the commit's line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Version from the tag, and the tag on cone
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/tags/cone-desktop-v* ]] || { echo "::error::releases build from cone-desktop-v* tags only, not $GITHUB_REF"; exit 1; }
+          [[ "$GITHUB_REF" != refs/tags/cone-desktop-v0.0.0-signprobe.* ]] || { echo "::error::$GITHUB_REF_NAME is a sign probe: it builds nothing"; exit 1; }
+          VERSION="${GITHUB_REF_NAME#cone-desktop-v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::'$VERSION' is not SemVer"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/cone || { echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on cone"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Cone $VERSION for Windows from $GITHUB_SHA"
+
+      - name: Read repository tool pins
+        id: pins
+        shell: pwsh
+        run: |
+          foreach ($tool in @('node', 'pnpm')) {
+            $pins = @(Get-ChildItem "bin/.$tool-*.pkg")
+            if ($pins.Count -ne 1) { throw "Expected one $tool pin" }
+            $version = $pins[0].Name -replace "^\.$tool-(.*)\.pkg$", '$1'
+            "$tool=$version" >> $env:GITHUB_OUTPUT
+          }
+          $rust = (Select-String -Path rust-toolchain.toml -Pattern '^channel = "(.+)"$').Matches.Groups[1].Value
+          if (!$rust) { throw "Expected a rust-toolchain.toml channel" }
+          "rust=$rust" >> $env:GITHUB_OUTPUT
+      - name: Select pinned Rust
+        shell: pwsh
+        env:
+          RUST_VERSION: ${{ steps.pins.outputs.rust }}
+        run: |
+          rustup toolchain install $env:RUST_VERSION --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "RUSTUP_TOOLCHAIN=$env:RUST_VERSION" >> $env:GITHUB_ENV
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: cone-windows-release
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: ${{ steps.pins.outputs.pnpm }}
+      - name: Frontend dependencies (the transform parses with the app's own rolldown)
+        run: pnpm install --frozen-lockfile
+
+      - name: cone-rebrand-test
+        run: bash cone/rebrand-test.sh
+      - name: cone-rebrand-check
+        run: cone/rebrand.sh check
+
+      # Before the compile, so a moved package, a missing runtime or SDK
+      # fails in minutes: the pinned dlib, the metadata and the signCommand
+      # delta, outside the tree. No Azure sign-in yet.
+      - name: Signing inputs (cone/windows-sign.sh prepare)
+        id: sign-inputs
+        env:
+          CONE_SIGN_ENDPOINT: ${{ secrets.CONE_SIGN_ENDPOINT }}
+          CONE_SIGN_ACCOUNT: ${{ secrets.CONE_SIGN_ACCOUNT }}
+          CONE_SIGN_PROFILE: ${{ secrets.CONE_SIGN_PROFILE }}
+        run: cone/windows-sign.sh prepare "$RUNNER_TEMP/cone-sign"
+
+      - name: Compile (cone/windows-build.sh compile --release)
+        id: compile
+        run: cone/windows-build.sh compile "$VERSION" --release
+
+      # Directly before the signing: the assertion lives minutes.
+      - name: Azure sign-in over GitHub OIDC
+        id: azure-login
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: The signing token, cached while the assertion is fresh
+        id: token
+        run: cone/windows-sign.sh token
+
+      # Tauri's own verify (is a helper signed already?) uses the same
+      # signtool as the signCommand.
+      - name: Bundle and sign (cone/windows-build.sh bundle --release)
+        id: bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          TAURI_WINDOWS_SIGNTOOL_PATH="$(cat "$RUNNER_TEMP/cone-sign/signtool.path")"
+          export TAURI_WINDOWS_SIGNTOOL_PATH
+          cone/windows-build.sh bundle "$VERSION" --release "$RUNNER_TEMP/cone-sign/tauri.cone-sign.conf.json"
+
+      - name: Sign out of Azure
+        if: always()
+        run: az logout >/dev/null 2>&1 || true; az account clear >/dev/null 2>&1 || true
+
+      - name: Install on the runner and verify, every signature included
+        shell: pwsh
+        run: ./cone/windows-install-check.ps1 -Version $env:VERSION -Signed -SignTool (Get-Content "$env:RUNNER_TEMP/cone-sign/signtool.path" -Raw).Trim()
+
+      # The installer and its .sig only: the release merges every platform's
+      # artifact into one folder.
+      - name: Stage the installer and its updater signature
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/cone-windows"
+          mkdir -p "$out"
+          cp "target/release/bundle/nsis/Cone_${VERSION}_x64-setup.exe" "target/release/bundle/nsis/Cone_${VERSION}_x64-setup.exe.sig" "$out/"
+          (cd "$out" && sha256sum ./*)
+      # Kept as long as the macOS state, so a resume can still carry it.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cone-desktop-windows-x64
+          path: ${{ runner.temp }}/cone-windows
+          if-no-files-found: error
+          retention-days: 14
+
+  # A resume finishes the macOS builds; the Windows installer was built and
+  # signed by the run it resumes (or carried into it by this job, for a
+  # resume of a resume). Copied, never rebuilt: the same bytes, in this run,
+  # for the release. No environment and no secret: it only moves an artifact
+  # between runs of this workflow on this tag and commit.
+  windows-resume:
+    name: Windows installer of the resumed run
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.resume_run_id != '' && inputs.promote == '' && inputs.windows_check == '' &&
+      startsWith(github.ref, 'refs/tags/cone-desktop-v') &&
+      !startsWith(github.ref, 'refs/tags/cone-desktop-v0.0.0-signprobe.')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: The run to resume, and its Windows installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.resume_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]] || { echo "::error::resume_run_id '$SOURCE_RUN' is not a run id"; exit 1; }
+          got="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" --jq '[.path, .head_branch, .head_sha] | join(" ")')"
+          want=".github/workflows/cone-desktop.yml $GITHUB_REF_NAME $GITHUB_SHA"
+          [[ "$got" == "$want" ]] || { echo "::error::run $SOURCE_RUN is '$got', not '$want'"; exit 1; }
+          names="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts" --jq '.artifacts[] | select(.expired | not) | .name')"
+          grep -qx cone-desktop-windows-x64 <<<"$names" || {
+            echo "::error::run $SOURCE_RUN has no Windows installer (cone-desktop-windows-x64): re-run its failed Windows job there, or tag a new version"; exit 1; }
+          echo "carrying cone-desktop-windows-x64 from run $SOURCE_RUN ($GITHUB_REF_NAME at $GITHUB_SHA)"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cone-desktop-windows-x64
+          path: ${{ runner.temp }}/cone-windows
+          run-id: ${{ inputs.resume_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cone-desktop-windows-x64
+          path: ${{ runner.temp }}/cone-windows
+          if-no-files-found: error
+          retention-days: 14
+
+  # One release holds every platform (decision W9): both macOS builds and the
+  # signed Windows installer — from build-windows on a tag push, carried by
+  # windows-resume on a resume. Without the installer there is no release.
+  # It never promotes: that is a dispatch of its own.
+  release:
+    name: GitHub Release
+    needs: [build, build-windows, windows-resume]
+    # always(): a resume skips `shallow` and build-windows by design, and a
+    # job whose ancestor was skipped is skipped too unless its condition says
+    # otherwise — the 2.1.0 resume notarized both builds and published nothing
+    # (Slice 51). needs.build.result is 'success' only when every matrix
+    # target succeeded.
+    if: >-
+      always() && needs.build.result == 'success' &&
+      startsWith(github.ref, 'refs/tags/cone-desktop-v') &&
+      !startsWith(github.ref, 'refs/tags/cone-desktop-v0.0.0-signprobe.') &&
+      ((github.event_name == 'push' && needs.build-windows.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && needs.windows-resume.result == 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -718,30 +929,39 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          [[ "$GITHUB_REF" != refs/tags/cone-desktop-v0.0.0-signprobe.* ]] || { echo "::error::$GITHUB_REF_NAME is a sign probe: it is never released"; exit 1; }
           VERSION="${GITHUB_REF_NAME#cone-desktop-v}"
           UPSTREAM="$(tr -d '[:space:]' < cone/UPSTREAM)"
           for arch in aarch64 x64; do
             ls "dist/Cone_${VERSION}_${arch}.dmg" "dist/Cone_${VERSION}_${arch}.app.tar.gz" "dist/Cone_${VERSION}_${arch}.app.tar.gz.sig"
           done
-          (cd dist && sha256sum ./*.dmg ./*.app.tar.gz > SHA256SUMS && cat SHA256SUMS)
+          exe="Cone_${VERSION}_x64-setup.exe"
+          ls "dist/$exe" "dist/$exe.sig" || { echo "::error::no Windows installer $exe with its .sig: a release holds every platform"; exit 1; }
+          # The installer's updater signature, as an installed app checks it
+          # (Tauri itself only warns when the key does not match).
+          cone/updater-verify.sh "dist/$exe" "dist/$exe.sig" cone/updater.pub
+          (cd dist && sha256sum ./*.dmg ./*.app.tar.gz ./*-setup.exe > SHA256SUMS && cat SHA256SUMS)
           pre=()
           if [[ "$VERSION" == *-* ]]; then pre=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/*.app.tar.gz dist/*.app.tar.gz.sig dist/SHA256SUMS \
+          gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/*.app.tar.gz dist/*.app.tar.gz.sig "dist/$exe" "dist/$exe.sig" dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --verify-tag ${pre[@]+"${pre[@]}"} \
             --title "Cone $VERSION" \
-            --notes "Cone Desktop $VERSION, built from block/buzz-app $UPSTREAM ($GITHUB_SHA). Signed with Cone's Developer ID and notarized by Apple; Apple silicon (aarch64) and Intel (x64), each with its signed updater archive. Installed apps update to it once it is promoted."
+            --notes "Cone Desktop $VERSION, built from block/buzz-app $UPSTREAM ($GITHUB_SHA). macOS: signed with Cone's Developer ID and notarized by Apple; Apple silicon (aarch64) and Intel (x64), each with its signed updater archive. Windows x86_64: $exe, signed by Cone Digital AB (Azure Artifact Signing), with its updater signature. Installed apps update to it once it is promoted."
 
-  # Publishes a release to installed apps: its archives verified against
-  # cone/updater.pub as an app verifies them, latest.json written, uploaded to
+  # Publishes a release to installed apps: its two macOS archives and its
+  # Windows installer verified against cone/updater.pub as an app verifies
+  # them, latest.json written with exactly the three platforms, uploaded to
   # the bucket object 2/latest.json with the bucket-scoped token, and read
   # back through the feed. The owner approves it like every cone-release run.
   # One promotion at a time across all tags, and each refuses to move the feed
-  # to an older version than the bucket holds or to write any other object
-  # (cone/promote-check.sh). The old app's feed is read before and after and
-  # must not change by a byte.
+  # to an older version than the bucket holds, to drop a platform the feed
+  # has, or to write any other object (cone/promote-check.sh). The old app's
+  # feed is read before and after and must not change by a byte.
   promote:
     name: Promote ${{ inputs.promote }}
-    if: github.event_name == 'workflow_dispatch' && inputs.promote != '' && inputs.resume_run_id == '' && inputs.windows_check == ''
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.promote != '' && inputs.resume_run_id == '' && inputs.windows_check == '' &&
+      !startsWith(github.ref, 'refs/tags/cone-desktop-v0.0.0-signprobe.')
     runs-on: ubuntu-latest
     environment: cone-release
     concurrency:
@@ -779,38 +999,53 @@ jobs:
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
               --pattern "Cone_${VERSION}_${arch}.app.tar.gz" --pattern "Cone_${VERSION}_${arch}.app.tar.gz.sig"
           done
+          exe="Cone_${VERSION}_x64-setup.exe"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist --pattern "$exe" --pattern "$exe.sig"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist --pattern SHA256SUMS
-          (cd dist && grep -E '\.app\.tar\.gz$' SHA256SUMS | sha256sum -c -)
+          # Each file the feed will name is in SHA256SUMS and matches it.
+          (cd dist && grep -E '(\.app\.tar\.gz|_x64-setup\.exe)$' SHA256SUMS > feed.sums && cat feed.sums && sha256sum -c feed.sums)
+          [[ "$(wc -l < dist/feed.sums)" -eq 3 ]] || { echo "::error::SHA256SUMS does not list both archives and the installer"; exit 1; }
           for arch in aarch64 x64; do
             cone/updater-verify.sh "dist/Cone_${VERSION}_${arch}.app.tar.gz" "dist/Cone_${VERSION}_${arch}.app.tar.gz.sig" cone/updater.pub
           done
+          cone/updater-verify.sh "dist/$exe" "dist/$exe.sig" cone/updater.pub
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "UPSTREAM=$(git show "$TAG:cone/UPSTREAM" | tr -d '[:space:]')" >> "$GITHUB_ENV"
 
       # Tauri's static updater manifest: each platform's signature is the
-      # .sig file's text, its URL the release asset.
+      # .sig file's text, its URL the release asset. On Windows the payload
+      # is the NSIS installer itself; the app asks for windows-x86_64-nsis,
+      # then windows-x86_64 (tauri-plugin-updater 2.14.1).
       - name: latest.json
         run: |
           set -euo pipefail
           url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          exe="Cone_${VERSION}_x64-setup.exe"
           jq -n --arg v "$VERSION" --arg notes "Cone $VERSION (block/buzz-app $UPSTREAM)" \
                 --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                 --rawfile sa "dist/Cone_${VERSION}_aarch64.app.tar.gz.sig" \
                 --rawfile sx "dist/Cone_${VERSION}_x64.app.tar.gz.sig" \
+                --rawfile sw "dist/$exe.sig" \
                 --arg ua "$url/Cone_${VERSION}_aarch64.app.tar.gz" \
                 --arg ux "$url/Cone_${VERSION}_x64.app.tar.gz" \
+                --arg uw "$url/$exe" \
             '{version: $v, notes: $notes, pub_date: $date,
               platforms: {"darwin-aarch64": {signature: ($sa | rtrimstr("\n")), url: $ua},
-                          "darwin-x86_64":  {signature: ($sx | rtrimstr("\n")), url: $ux}}}' > latest.json
-          jq -e --arg v "$VERSION" '.version == $v and (.platforms | keys) == ["darwin-aarch64", "darwin-x86_64"]
+                          "darwin-x86_64":  {signature: ($sx | rtrimstr("\n")), url: $ux},
+                          "windows-x86_64": {signature: ($sw | rtrimstr("\n")), url: $uw}}}' > latest.json
+          jq -e --arg v "$VERSION" '.version == $v and (.platforms | keys) == ["darwin-aarch64", "darwin-x86_64", "windows-x86_64"]
             and ([.platforms[].signature | length > 0] | all)' latest.json >/dev/null
           cat latest.json
 
+      # The feed's credential under the names of decision W9 only: the names
+      # every tag up to 2.4.0 reads are deleted from cone-release before the
+      # first Windows promotion, so an older tag's promote, which would write
+      # two platforms, stops at its bucket listing.
       - name: Upload to the feed
         env:
-          CONE_R2_ACCESS_KEY_ID: ${{ secrets.CONE_R2_ACCESS_KEY_ID }}
-          CONE_R2_SECRET_ACCESS_KEY: ${{ secrets.CONE_R2_SECRET_ACCESS_KEY }}
-          CONE_R2_ENDPOINT: ${{ secrets.CONE_R2_ENDPOINT }}
+          CONE_FEED_R2_ACCESS_KEY_ID: ${{ secrets.CONE_FEED_R2_ACCESS_KEY_ID }}
+          CONE_FEED_R2_SECRET_ACCESS_KEY: ${{ secrets.CONE_FEED_R2_SECRET_ACCESS_KEY }}
+          CONE_FEED_R2_ENDPOINT: ${{ secrets.CONE_FEED_R2_ENDPOINT }}
         run: |
           set -euo pipefail
           old_before="$(curl -fsS "$OLD_FEED_URL" | sha256sum | cut -d' ' -f1)"
@@ -819,9 +1054,9 @@ jobs:
           envfile="$RUNNER_TEMP/cone-feed.env"
           ( umask 077
             printf 'RCLONE_CONFIG=/dev/null\nRCLONE_CONFIG_FEED_TYPE=s3\nRCLONE_CONFIG_FEED_PROVIDER=Cloudflare\nRCLONE_CONFIG_FEED_NO_CHECK_BUCKET=true\n'
-            printf 'RCLONE_CONFIG_FEED_ENDPOINT=%s\n' "$CONE_R2_ENDPOINT"
-            printf 'RCLONE_CONFIG_FEED_ACCESS_KEY_ID=%s\n' "$CONE_R2_ACCESS_KEY_ID"
-            printf 'RCLONE_CONFIG_FEED_SECRET_ACCESS_KEY=%s\n' "$CONE_R2_SECRET_ACCESS_KEY" ) > "$envfile"
+            printf 'RCLONE_CONFIG_FEED_ENDPOINT=%s\n' "$CONE_FEED_R2_ENDPOINT"
+            printf 'RCLONE_CONFIG_FEED_ACCESS_KEY_ID=%s\n' "$CONE_FEED_R2_ACCESS_KEY_ID"
+            printf 'RCLONE_CONFIG_FEED_SECRET_ACCESS_KEY=%s\n' "$CONE_FEED_R2_SECRET_ACCESS_KEY" ) > "$envfile"
           trap 'rm -f "$envfile"' EXIT
           feed_rclone() { docker run --rm --env-file "$envfile" -v "$PWD:/work" -w /work "$RCLONE_IMAGE" "$@"; }
           # What the object holds now, read from the bucket itself; a listing
@@ -834,7 +1069,7 @@ jobs:
           else
             echo "feed before: no $FEED_OBJECT in the bucket"
           fi
-          cone/promote-check.sh previous.json "$VERSION" "$FEED_OBJECT"
+          cone/promote-check.sh previous.json latest.json "$VERSION" "$FEED_OBJECT"
           feed_rclone copyto /work/latest.json "FEED:$FEED_BUCKET/$FEED_OBJECT" --header-upload "Cache-Control: no-cache"
           want="$(sha256sum latest.json | cut -d' ' -f1)"
           for _ in $(seq 1 12); do

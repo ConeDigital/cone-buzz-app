@@ -156,9 +156,23 @@ cone-upstream-test:
     bash cone/upstream-test.sh
 
 # cone/updater-verify.sh and cone/promote-check.sh against throwaway keys'
-# signatures and planted feeds (cone/test/updater).
+# signatures and planted feeds (cone/test/updater); promote-check.sh's planted
+# mutations, each killed by a named case.
 cone-updater-test:
     bash cone/updater-test.sh
+
+# cone/windows-sign.sh against mocks of the dlib package, dotnet, signtool
+# and az: the pinned hash, the runtime, the metadata, the signCommand delta,
+# the token's expiry (cone-buzz-infra Slice 48 decision W7).
+cone-sign-test:
+    bash cone/windows-sign-test.sh
+
+# Which jobs of cone-desktop.yml run for which event and ref — a sign probe
+# tag runs sign-probe alone, every building, releasing or promoting job
+# refuses it by its own condition — and the workflow's standing rules, with
+# each planted change to it failing the check it names.
+cone-workflow-test:
+    node cone/workflow-test.mjs --mutations
 
 # cone/notarize.sh, cone/release-advance.sh and cone/updater-archive.sh
 # against mocks of xcrun, hdiutil and codesign: acceptance, a dropped request

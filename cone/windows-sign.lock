@@ -1,0 +1,31 @@
+# The pinned inputs of the Windows Authenticode signature (cone-buzz-infra
+# Slice 48 decision W7, ADR-492): Azure Artifact Signing through signtool and
+# Microsoft's dlib, read by cone/windows-sign.sh. KEY=value lines only; the
+# script reads exactly these keys and is never sourced. An upgrade is an
+# explicit pull request: download the new package, take its SHA-256 and check
+# its CHANGELOG.md and the runtime its bin/x64 runtimeconfig names.
+#
+# The NuGet package Microsoft.ArtifactSigning.Client, its nupkg's SHA-256
+# (re-verified 2026-11-27 by downloading it; NuGet's catalog SHA-512 matches,
+# cone-buzz-infra docs/upstream.md "Azure Artifact Signing"), and the x64 dlib
+# inside it (x64 signtool loads only the x64 dlib).
+DLIB_PACKAGE=Microsoft.ArtifactSigning.Client
+DLIB_VERSION=1.0.151
+DLIB_SHA256=35375a4bc4e1102da729fc3d8d9925f774c3baae6b8b7ff6398d948ca9ab0d8a
+DLIB_PATH=bin/x64/Azure.CodeSigning.Dlib.dll
+# RFC 3161 timestamps: the certificates live 72 hours, the timestamp keeps a
+# signature valid after that.
+TIMESTAMP_URL=http://timestamp.acs.microsoft.com
+# The token the dlib asks for (Azure.CodeSigning.dll's scope
+# https://codesigning.azure.net/.default, as the Azure CLI names it).
+TOKEN_RESOURCE=https://codesigning.azure.net
+# The one credential the dlib may use: the Azure CLI that azure/login signed in
+# over GitHub OIDC. Every other type the dlib knows is excluded by name (an
+# unknown name is an error; the names are the dlib core's, read from
+# Azure.CodeSigning.Dlib.Core.dll 1.0.151).
+CREDENTIAL=AzureCliCredential
+KNOWN_CREDENTIALS=EnvironmentCredential ManagedIdentityCredential WorkloadIdentityCredential SharedTokenCacheCredential VisualStudioCredential VisualStudioCodeCredential AzureCliCredential AzurePowerShellCredential AzureDeveloperCliCredential InteractiveBrowserCredential
+# signtool from the Windows SDK, found through the registry root as Tauri
+# finds it; the dlib needs an SDK of build 22621 or later (Learn:
+# SignTool 10.0.22621.755).
+SIGNTOOL_MIN_BUILD=22621
