@@ -3,13 +3,25 @@ carried unchanged to the Buzz 1.0 base by Slice 48).
 
 Run from the repository root:  bin/uv run --with Pillow==12.2.0 python cone/make-assets.py
 then:                          bin/pnpm tauri icon cone/icons/icon-1024.png -o cone/icons
+then once more (`tauri icon` writes its own icon.ico from the macOS tile):
+                               bin/uv run --with Pillow==12.2.0 python cone/make-assets.py ico
 
 Writes cone/icons/icon-1024.png — the artwork on a white tile, 824 px with
 185 px corners on a 1024 px canvas, the inset upstream's
 scripts/generate-macos-icon.py uses — and cone/icons/dmg-background.png at
 the size and layout of upstream's (1320x1000, the white panel where Finder
 draws the app and Applications icons).
+
+`ico` writes cone/icons/icon.ico alone: the Windows icon (the exe, the
+installer, the taskbar, the window), the mark full-bleed on transparency —
+Windows draws no tile, so the macOS tile's inset would show a small mark —
+in the frames and order `tauri icon` writes (32, 16, 24, 48, 64, 256 px, each
+a PNG). Only Windows reads the .ico.
 """
+import io
+import struct
+import sys
+
 from PIL import Image, ImageDraw, ImageFont
 
 S = 4
@@ -28,6 +40,29 @@ def tile():
     canvas = Image.new("RGBA", (1024 * S, 1024 * S))
     canvas.paste(t, (100 * S, 100 * S), mask)
     canvas.resize((1024, 1024), Image.Resampling.LANCZOS).save(f"{ICONS}/icon-1024.png")
+
+
+def windows_icon():
+    with Image.open(f"{ICONS}/source.png") as im:
+        art = im.convert("RGBA")
+    art = art.crop(art.getchannel("A").getbbox())
+    side = 1024
+    scale = side * 0.96 / max(art.size)
+    art = art.resize((round(art.width * scale), round(art.height * scale)), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (side, side))
+    canvas.alpha_composite(art, ((side - art.width) // 2, (side - art.height) // 2))
+    frames = []
+    for size in (32, 16, 24, 48, 64, 256):
+        buf = io.BytesIO()
+        canvas.resize((size, size), Image.Resampling.LANCZOS).save(buf, "PNG", optimize=True)
+        frames.append((size, buf.getvalue()))
+    out = struct.pack("<HHH", 0, 1, len(frames))
+    offset = 6 + 16 * len(frames)
+    for size, data in frames:
+        out += struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0, 1, 32, len(data), offset)
+        offset += len(data)
+    with open(f"{ICONS}/icon.ico", "wb") as f:
+        f.write(out + b"".join(data for _, data in frames))
 
 
 def font(size, bold):
@@ -63,5 +98,8 @@ def dmg_background():
 
 
 if __name__ == "__main__":
-    tile()
-    dmg_background()
+    if sys.argv[1:] == ["ico"]:
+        windows_icon()
+    else:
+        tile()
+        dmg_background()
