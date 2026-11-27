@@ -31,6 +31,14 @@ name: Cone Desktop
 # cone-desktop-v* tags, the owner a required reviewer, so each run — a resume
 # too — waits for the owner's approval. A dispatch from a branch is refused
 # there (criterion 3). Every upstream workflow stays disabled in this fork.
+#
+# The Windows check (cone-buzz-infra Slice 38, merge 3a of Slice 48): a
+# dispatch with `windows_check` set to a version builds an unsigned Windows
+# x86_64 NSIS installer of that version on windows-2025, from any branch, with
+# no environment and no secret — the rebrand's mutation test and check on
+# Windows, cone/windows-build.sh, a silent install on the runner checked for
+# Cone's name, publisher, version, identifier, helpers and updater — and keeps
+# it 7 days as the artifact cone-desktop-windows-x64-unsigned.
 
 on:
   pull_request:
@@ -39,8 +47,10 @@ on:
     branches: [cone]
     tags:
       - 'cone-desktop-v*'
-  # Exactly one input per dispatch, on a cone-desktop-v* tag (the environment
-  # refuses a branch): resume_run_id resumes a release, promote publishes one.
+  # Exactly one input per dispatch: resume_run_id resumes a release and
+  # promote publishes one, both on a cone-desktop-v* tag (the environment
+  # refuses a branch); windows_check builds the unsigned Windows installer
+  # from any ref, outside the environment.
   workflow_dispatch:
     inputs:
       resume_run_id:
@@ -49,6 +59,10 @@ on:
         default: ''
       promote:
         description: Promote — the release tag (cone-desktop-vX.Y.Z) installed apps update to
+        required: false
+        default: ''
+      windows_check:
+        description: Windows check — build an unsigned Windows installer as this version (X.Y.Z or X.Y.Z-pre); no secrets
         required: false
         default: ''
 
@@ -115,13 +129,220 @@ jobs:
 
   dispatch-inputs:
     name: Dispatch inputs
-    if: github.event_name == 'workflow_dispatch' && ((inputs.resume_run_id == '') == (inputs.promote == ''))
+    if: >-
+      github.event_name == 'workflow_dispatch' && !(
+        (inputs.resume_run_id != '' && inputs.promote == '' && inputs.windows_check == '') ||
+        (inputs.resume_run_id == '' && inputs.promote != '' && inputs.windows_check == '') ||
+        (inputs.resume_run_id == '' && inputs.promote == '' && inputs.windows_check != ''))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::error::a dispatch takes exactly one of resume_run_id and promote"
+          echo "::error::a dispatch takes exactly one of resume_run_id, promote and windows_check"
           exit 1
+
+  # The unsigned Windows x86_64 installer (cone-buzz-infra Slice 38 decision
+  # 4's windows-check, on the Buzz 1.0 base): no environment, no secret, read
+  # access only. The toolchain and the install check follow upstream's own
+  # Windows job (desktop-build.yml, job windows), its action pins included;
+  # Hermit and just do not run on Windows, so the build is
+  # cone/windows-build.sh in Git Bash.
+  windows-check:
+    name: Windows check (unsigned)
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_check != '' && inputs.resume_run_id == '' && inputs.promote == ''
+    runs-on: windows-2025
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ inputs.windows_check }}
+      CARGO_TERM_COLOR: always
+    steps:
+      # The rebrand's manifests pin upstream files by hash and text by exact
+      # match: the checkout must be byte for byte the commit's, so no CRLF
+      # conversion (the runner's Git for Windows converts by default).
+      - name: Check out with the commit's line endings
+        run: |
+          echo "core.autocrlf on the runner: $(git config --show-origin --get core.autocrlf || echo unset)"
+          git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read repository tool pins
+        id: pins
+        shell: pwsh
+        run: |
+          foreach ($tool in @('node', 'pnpm')) {
+            $pins = @(Get-ChildItem "bin/.$tool-*.pkg")
+            if ($pins.Count -ne 1) { throw "Expected one $tool pin" }
+            $version = $pins[0].Name -replace "^\.$tool-(.*)\.pkg$", '$1'
+            "$tool=$version" >> $env:GITHUB_OUTPUT
+          }
+          $rust = (Select-String -Path rust-toolchain.toml -Pattern '^channel = "(.+)"$').Matches.Groups[1].Value
+          if (!$rust) { throw "Expected a rust-toolchain.toml channel" }
+          "rust=$rust" >> $env:GITHUB_OUTPUT
+      - name: Select pinned Rust
+        shell: pwsh
+        env:
+          RUST_VERSION: ${{ steps.pins.outputs.rust }}
+        run: |
+          rustup toolchain install $env:RUST_VERSION --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "RUSTUP_TOOLCHAIN=$env:RUST_VERSION" >> $env:GITHUB_ENV
+      # A check's cache, scoped to the ref that ran it; saved after a failure
+      # too, so the next attempt starts warm.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: cone-windows-check
+          cache-on-failure: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: ${{ steps.pins.outputs.pnpm }}
+      - name: Frontend dependencies (the transform parses with the app's own rolldown)
+        run: pnpm install --frozen-lockfile
+
+      # The in-app rebrand on Windows (decision 2): the planted failures fail
+      # here too, and the exact check passes, before any Rust compiles.
+      - name: cone-rebrand-test
+        run: bash cone/rebrand-test.sh
+      - name: cone-rebrand-check
+        run: cone/rebrand.sh check
+
+      - name: Build the NSIS installer (cone/windows-build.sh)
+        run: cone/windows-build.sh "$VERSION"
+
+      # What a person gets: the installer run silently into a scratch folder
+      # of this disposable runner, as upstream checks its own, and every Cone
+      # setting read back from what it wrote. Then the uninstaller.
+      - name: Install on the runner and verify
+        shell: pwsh
+        run: |
+          $fail = [System.Collections.Generic.List[string]]::new()
+          function Check([bool] $ok, [string] $what) {
+            if ($ok) { Write-Output "ok   $what" } else { Write-Output "FAIL $what"; $fail.Add($what) }
+          }
+          $cone = Get-Content cone/tauri.cone.conf.json -Raw | ConvertFrom-Json
+          $product = $cone.productName
+          $identifier = $cone.identifier
+          $publisher = (Get-Content cone/tauri.cone.windows.conf.json -Raw | ConvertFrom-Json).bundle.publisher
+          $pubkey = (Get-Content cone/updater.pub -Raw) -replace '\s', ''
+          $endpoint = (Select-String -Path cone/build.env -Pattern '^BUZZ_UPDATER_ENDPOINT=(.+)$').Matches.Groups[1].Value
+          $installer = (Resolve-Path "target/release/bundle/nsis/${product}_$($env:VERSION)_x64-setup.exe").Path
+          $dest = Join-Path $env:RUNNER_TEMP 'cone-install'
+          # NSIS /D must be last and unquoted.
+          $process = Start-Process $installer -ArgumentList "/S /D=$dest" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "the installer exited $($process.ExitCode)" }
+
+          Write-Output "== What the installer laid down in $dest"
+          Get-ChildItem $dest -Recurse -File | Sort-Object FullName | ForEach-Object {
+            '{0,12}  {1}' -f $_.Length, $_.FullName.Substring($dest.Length + 1)
+          }
+
+          Write-Output "== The files"
+          $exe = Join-Path $dest 'Buzz.exe'
+          Check (Test-Path $exe) "the app is Buzz.exe (upstream's Cargo binary name, as Contents/MacOS/Buzz on a Mac)"
+          Check (Test-Path (Join-Path $dest 'uninstall.exe')) "uninstall.exe"
+          foreach ($bin in @('buzz.exe', 'goose-acp.exe', 'buzz-agent-command.exe')) {
+            Check (Test-Path (Join-Path $dest "bin\$bin")) "bin\$bin"
+          }
+          & (Join-Path $dest 'bin\buzz.exe') --help | Out-Null
+          Check ($LASTEXITCODE -eq 0) "bin\buzz.exe --help runs"
+
+          Write-Output "== Apps & features (the uninstall entry)"
+          $uninstall = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$product"
+          $entry = Get-ItemProperty -LiteralPath $uninstall -ErrorAction SilentlyContinue
+          if ($entry) { $entry | Select-Object DisplayName, Publisher, DisplayVersion, InstallLocation, DisplayIcon, UninstallString, MainBinaryName | Format-List | Out-String | Write-Output }
+          Check ($entry.DisplayName -eq $product) "product name '$($entry.DisplayName)' is '$product'"
+          Check ($entry.Publisher -eq $publisher) "publisher '$($entry.Publisher)' is '$publisher'"
+          Check ($entry.DisplayVersion -eq $env:VERSION) "version '$($entry.DisplayVersion)' is '$($env:VERSION)'"
+          foreach ($block in @('Buzz Foundation', 'Buzz')) {
+            Check (-not (Test-Path -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$block")) "no uninstall entry '$block' (upstream's Windows product name lost to Cone's)"
+          }
+
+          Write-Output "== The identifier and the buzz:// scheme"
+          $scheme = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Classes\buzz' -ErrorAction SilentlyContinue).'(default)'
+          $open = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Classes\buzz\shell\open\command' -ErrorAction SilentlyContinue).'(default)'
+          Check ($scheme -eq "URL:$identifier protocol") "the scheme is '$scheme' (the bundle identifier $identifier)"
+          Check ($open -eq "`"$exe`" `"%1`"") "buzz:// opens $open"
+
+          Write-Output "== Shortcuts and PATH"
+          $shell = New-Object -ComObject WScript.Shell
+          foreach ($folder in @('Programs', 'Desktop')) {
+            $lnk = Join-Path ([Environment]::GetFolderPath($folder)) "$product.lnk"
+            $target = if (Test-Path $lnk) { $shell.CreateShortcut($lnk).TargetPath } else { '<absent>' }
+            Check ($target -eq $exe) "$folder\$product.lnk -> $target"
+          }
+          $userPath = (Get-ItemProperty HKCU:\Environment).Path -split ';'
+          Check ($userPath -contains (Join-Path $dest 'bin')) "the user PATH has $dest\bin (upstream's installer hook)"
+
+          Write-Output "== The executable"
+          (Get-Item $exe).VersionInfo | Select-Object ProductName, FileDescription, CompanyName, ProductVersion, FileVersion, LegalCopyright, OriginalFilename | Format-List | Out-String | Write-Output
+          Check ((Get-Item $exe).VersionInfo.ProductName -eq $product) "its version resource names $product"
+          $binary = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($exe))
+          Check ($binary.Contains($pubkey)) "cone/updater.pub's key is compiled in"
+          # The x86_64 compiler may store a short literal as 8-byte immediates
+          # (Slice 29 defect 237): the whole URL, or else every 8-byte piece of it.
+          if ($binary.Contains($endpoint)) {
+            Check $true "the feed $endpoint is compiled in, whole"
+          } else {
+            $pieces = @(for ($i = 0; $i + 8 -le $endpoint.Length; $i += 8) { $endpoint.Substring($i, 8) }) + $endpoint.Substring($endpoint.Length - 8)
+            $missing = @($pieces | Where-Object { -not $binary.Contains($_) })
+            Check ($missing.Count -eq 0) "the feed $endpoint is compiled in, in 8-byte pieces (missing: $($missing -join ', '))"
+          }
+          Check ($binary.Contains('Could not fetch a valid release JSON from the remote')) "the updater plugin is linked (build.rs saw the key and the feed)"
+          Check (-not ($binary -match 'github\.com/block/buzz(-app)?/releases')) "no Block update endpoint"
+          Write-Output "info: the identifier $identifier appears in Buzz.exe whole: $($binary.Contains($identifier))"
+
+          # A first start, for the record only: the app's data folders follow
+          # the identifier. A runner may not show a window; nothing fails here.
+          Write-Output "== A first start (information only)"
+          $app = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 30
+          Write-Output "running after 30 s: $(-not $app.HasExited)"
+          foreach ($dir in @("$env:APPDATA\$identifier", "$env:LOCALAPPDATA\$identifier", "$env:APPDATA\xyz.block.buzz.desktop", "$env:LOCALAPPDATA\xyz.block.buzz.desktop", "$env:USERPROFILE\.buzz")) {
+            Write-Output "$dir exists: $(Test-Path $dir)"
+          }
+          Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($dest, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object {
+            Write-Output "stopping $($_.Path)"
+            Stop-Process -Id $_.Id -Force
+          }
+          Start-Sleep -Seconds 5
+
+          Write-Output "== The uninstaller"
+          # _?= runs it in place and waits (NSIS otherwise copies it and returns).
+          $process = Start-Process (Join-Path $dest 'uninstall.exe') -ArgumentList "/S _?=$dest" -Wait -PassThru
+          Check ($process.ExitCode -eq 0) "uninstall.exe /S exited $($process.ExitCode)"
+          Check (-not (Test-Path $exe)) "Buzz.exe removed"
+          Check (-not (Test-Path -LiteralPath $uninstall)) "the uninstall entry removed"
+          Check (-not (Test-Path -LiteralPath 'HKCU:\Software\Classes\buzz')) "the buzz:// scheme removed"
+          Check (-not (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) "$product.lnk"))) "the Start menu shortcut removed"
+          $userPath = (Get-ItemProperty HKCU:\Environment).Path -split ';'
+          Check (-not ($userPath -contains (Join-Path $dest 'bin'))) "the user PATH entry removed"
+
+          if ($fail.Count -gt 0) { throw "$($fail.Count) check(s) failed: $($fail -join '; ')" }
+          Write-Output "verify: all checks passed"
+
+      - name: Stage the installer and its checksum
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/cone-windows"
+          mkdir -p "$out"
+          cp "target/release/bundle/nsis/Cone_${VERSION}_x64-setup.exe" "$out/"
+          printf '%s\n' "$GITHUB_SHA" > "$out/SOURCE_COMMIT"
+          (cd "$out" && sha256sum Cone_*.exe > SHA256SUMS && cat SHA256SUMS)
+          ls -l "$out"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cone-desktop-windows-x64-unsigned
+          path: ${{ runner.temp }}/cone-windows
+          if-no-files-found: error
+          retention-days: 7
 
   build:
     name: Build ${{ matrix.target }}
@@ -129,7 +350,7 @@ jobs:
     if: >-
       always() &&
       ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cone-desktop-v') && needs.shallow.result == 'success') ||
-       (github.event_name == 'workflow_dispatch' && inputs.resume_run_id != '' && inputs.promote == ''))
+       (github.event_name == 'workflow_dispatch' && inputs.resume_run_id != '' && inputs.promote == '' && inputs.windows_check == ''))
     runs-on: macos-latest
     environment: cone-release
     timeout-minutes: 360
@@ -485,7 +706,7 @@ jobs:
   # must not change by a byte.
   promote:
     name: Promote ${{ inputs.promote }}
-    if: github.event_name == 'workflow_dispatch' && inputs.promote != '' && inputs.resume_run_id == ''
+    if: github.event_name == 'workflow_dispatch' && inputs.promote != '' && inputs.resume_run_id == '' && inputs.windows_check == ''
     runs-on: ubuntu-latest
     environment: cone-release
     concurrency:

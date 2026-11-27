@@ -19,9 +19,11 @@ tree still differs from the tag under `cone/` only.
 |------|------|
 | `UPSTREAM` | the pinned upstream tag: a stable `vX.Y.Z`, never a beta, a preview or an internal `desktop-v*` tag |
 | `build.env` | the build-time configuration (no secret): the default community, Builderlab set empty on purpose |
-| `build-env.sh` | refuses a repository-root `.env*`, clears every `BUZZ_*` the build reads or the shell exports, then loads `build.env` |
+| `build-env.sh` | refuses a repository-root `.env*`, clears every `BUZZ_*` the build reads or the shell exports, then loads `build.env`; the release and window `--config` deltas both platforms' builds write (`cone_release_delta`, `cone_window_delta`) |
 | `tauri.cone.conf.json` | the Tauri config delta: name, identifier, icons, `Info.plist`, DMG layout and background |
-| `Info.plist`, `icons/`, `make-assets.py` | the menu-bar name and the microphone usage string; the icons and DMG background, generated from `icons/source.png` |
+| `tauri.cone.windows.conf.json` | the Windows-only delta: the publisher (`Cone Digital AB`, the one place to change it) |
+| `windows-build.sh` | the Windows x86_64 NSIS installer, unsigned (below) |
+| `Info.plist`, `icons/`, `make-assets.py` | the menu-bar name and the microphone usage string; the icons and DMG background, generated from `icons/source.png`; `icon.ico` (Windows only) is the mark full-bleed (`make-assets.py ico`) |
 | `cone.just` | `cone-desktop-build`, `cone-shallow-check`, `cone-build-env-check`, `cone-rebrand-check`, `cone-rebrand-test`, `cone-notarize-test`, `cone-updater-test`, `cone-upstream-test` |
 | `rebrand.sh`, `rebrand/`, `rebrand-test.sh` | the in-app rebrand: the transform, its manifests and replacement pictures, its mutation test (below) |
 | `upstream-watch.sh`, `upstream-test.sh` | the upstream watcher (below): the update pull request for each new stable tag, the tag after it merges, the workflow guard; their test |
@@ -43,6 +45,38 @@ a workstation). The updater is built in (Cone's feed and key), so a local
 build offers the newest promoted release. Never distribute a local build. The version goes
 into the build through a `--config` delta outside the tree, as upstream's
 release does; the tree is clean afterwards (the recipe checks).
+
+## Windows (unsigned, a check)
+
+`cone/windows-build.sh <version>` builds `Cone_<version>_x64-setup.exe`, an
+NSIS installer for Windows x86_64 (`cone-buzz-infra` Slice 38; per user,
+Tauri's default `currentUser`, so no admin rights). It runs in Git Bash on
+Windows with upstream's pinned Rust, Node and pnpm (no hermit, no `just`
+there): `cone_build_env`, the same release delta (no updater signature:
+`createUpdaterArtifacts` false) and window delta as the Macs plus
+`tauri.cone.windows.conf.json`, the rebrand applied, scanned and restored
+around `pnpm tauri build --ci --no-sign --bundles nsis`, the bundle gate,
+and a clean tree. It is not Authenticode-signed: Windows warns about an
+unknown publisher.
+
+The job **Windows check (unsigned)** in `cone-desktop.yml` runs it on
+`windows-2025` from any branch, with no environment and no secret:
+
+```bash
+gh workflow run cone-desktop.yml -R ConeDigital/cone-buzz-app --ref <branch> -f windows_check=<version>
+gh run download <run> -R ConeDigital/cone-buzz-app -n cone-desktop-windows-x64-unsigned
+```
+
+It runs the rebrand's mutation test and check on Windows, builds, installs
+the installer silently into a scratch folder of the runner, and checks what
+it wrote: `Buzz.exe` (upstream's binary name, as on a Mac) and `bin\buzz.exe`,
+`bin\goose-acp.exe`, `bin\buzz-agent-command.exe`; the uninstall entry's
+name, publisher and version; the `buzz://` scheme registered for
+`digital.cone.desktop`; the shortcuts and the user `PATH`; Cone's updater
+key and feed compiled in and no Block feed; then the uninstaller. The
+installer, `SHA256SUMS` and `SOURCE_COMMIT` are kept 7 days as the artifact
+`cone-desktop-windows-x64-unsigned`. Never distribute it: the signed
+release is a later change.
 
 ## What a Mac shares between apps
 
