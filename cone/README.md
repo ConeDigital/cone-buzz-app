@@ -257,7 +257,8 @@ Re-read the trigger signals and the facts in `cone-buzz-infra`
    on every executable, `buzz --help`; Cone's feed and key compiled in,
    Block's feeds absent), makes each updater archive from the stapled app
    and signs it with the updater key, and creates the GitHub Release with
-   both DMGs, both `.app.tar.gz`, both `.sig` and `SHA256SUMS`.
+   both DMGs, both `.app.tar.gz`, `Cone_<v>_x64-setup.exe`, the three `.sig`
+   and `SHA256SUMS` — only when all three platforms built.
 5. If Apple is still working when the run's time is up, the run fails with
    the command that resumes it, and its state is an artifact for 14 days:
    `gh workflow run cone-desktop.yml -R ConeDigital/cone-buzz-app --ref cone-desktop-v2.Y.Z -f resume_run_id=<run>`.

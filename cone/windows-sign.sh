@@ -95,10 +95,13 @@ find_signtool() {
   # As tauri-bundler's signtool(): HKLM\SOFTWARE\Microsoft\Windows Kits\Installed
   # Roots, KitsRoot10, its versioned bin folders newest first, x64.
   local key='HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots' root kits kit min="$SIGNTOOL_MIN_BUILD" path
-  root="$(native reg query "$key" /v KitsRoot10 | tr -d '\r' | sed -n 's/^ *KitsRoot10 *REG_SZ *//p')"
+  # The 64-bit view first, as Tauri reads it; the SDK also writes the 32-bit
+  # one, which some images fill alone.
+  root="$( { native reg query "$key" /v KitsRoot10 2>/dev/null || native reg query "$key" /v KitsRoot10 /reg:32 2>/dev/null || true; } \
+    | tr -d '\r' | sed -n 's/^ *KitsRoot10 *REG_SZ *//p' | head -n 1)"
   [[ -n "$root" ]] || die "no KitsRoot10 under $key: is the Windows SDK installed?"
-  kits="$(native reg query "$key" | tr -d '\r' | sed -n 's/^HKEY_LOCAL_MACHINE\\.*\\Installed Roots\\\(10\.[0-9.]*\)$/\1/p' \
-    | sort -t. -k1,1nr -k2,2nr -k3,3nr -k4,4nr)"
+  kits="$( { native reg query "$key" 2>/dev/null || true; native reg query "$key" /reg:32 2>/dev/null || true; } | tr -d '\r' \
+    | sed -n 's/^HKEY_LOCAL_MACHINE\\.*\\Installed Roots\\\(10\.[0-9.]*\)$/\1/p' | sort -u -t. -k1,1nr -k2,2nr -k3,3nr -k4,4nr)"
   for kit in $kits; do
     (( 10#$(cut -d. -f3 <<<"$kit") >= min )) || continue
     path="$(unixpath "$root")"
