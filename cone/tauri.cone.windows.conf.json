@@ -1,5 +1,11 @@
 {
   "bundle": {
-    "publisher": "Cone Digital AB"
+    "publisher": "Cone Digital AB",
+    "windows": {
+      "nsis": {
+        "installerIcon": "../cone/icons/icon.ico",
+        "uninstallerIcon": "../cone/icons/icon.ico"
+      }
+    }
   }
 }

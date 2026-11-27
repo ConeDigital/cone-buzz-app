@@ -21,7 +21,7 @@ tree still differs from the tag under `cone/` only.
 | `build.env` | the build-time configuration (no secret): the default community, Builderlab set empty on purpose |
 | `build-env.sh` | refuses a repository-root `.env*`, clears every `BUZZ_*` the build reads or the shell exports, then loads `build.env`; the release and window `--config` deltas both platforms' builds write (`cone_release_delta`, `cone_window_delta`) |
 | `tauri.cone.conf.json` | the Tauri config delta: name, identifier, icons, `Info.plist`, DMG layout and background |
-| `tauri.cone.windows.conf.json` | the Windows-only delta: the publisher (`Cone Digital AB`, the one place to change it) |
+| `tauri.cone.windows.conf.json` | the Windows-only delta: the publisher (`Cone Digital AB`, confirmed by the owner; the one place it is set) and the setup and uninstaller icons (`icons/icon.ico`; NSIS's generic icon otherwise) |
 | `windows-build.sh` | the Windows x86_64 NSIS installer, unsigned (below) |
 | `Info.plist`, `icons/`, `make-assets.py` | the menu-bar name and the microphone usage string; the icons and DMG background, generated from `icons/source.png`; `icon.ico` (Windows only) is the mark full-bleed (`make-assets.py ico`) |
 | `cone.just` | `cone-desktop-build`, `cone-shallow-check`, `cone-build-env-check`, `cone-rebrand-check`, `cone-rebrand-test`, `cone-notarize-test`, `cone-updater-test`, `cone-upstream-test` |
@@ -76,7 +76,22 @@ name, publisher and version; the `buzz://` scheme registered for
 key and feed compiled in and no Block feed; then the uninstaller. The
 installer, `SHA256SUMS` and `SOURCE_COMMIT` are kept 7 days as the artifact
 `cone-desktop-windows-x64-unsigned`. Never distribute it: the signed
-release is a later change.
+release is a later change. A check runs in its own concurrency group
+(`cone-desktop-windows-check-<ref>`), so it never replaces a pending
+release, resume or promotion of the same tag.
+
+What the first green run showed (run 45972802521, `2.5.0-windows.1`, 45 min
+cold; the Rust build 29 min of it): a 60 MiB installer that lays down
+`Buzz.exe` (168 MB), `bin\buzz.exe`, `bin\goose-acp.exe`,
+`bin\buzz-agent-command.exe`, `bin\.gitkeep` and `uninstall.exe`; Apps &
+features shows `Cone`, `Cone Digital AB`, the version; the exe's version
+resource says `Cone` and `Cone Digital AB`; the app's data folders are
+`%APPDATA%` and `%LOCALAPPDATA%\digital.cone.desktop`. The feed's URL is
+compiled into `Buzz.exe` whole. The bundle gate finds the word only inside
+kept runtime names, 29 of them, as on a Mac. The runner's Git converts to
+CRLF by default (`core.autocrlf true` in its system config), which would
+break the rebrand's hashes and exact matches: the job sets it to `false`
+before checking out.
 
 ## What a Mac shares between apps
 

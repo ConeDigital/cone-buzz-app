@@ -66,8 +66,13 @@ on:
         required: false
         default: ''
 
+# A group keeps one run going and only ONE pending: a newer run replaces a
+# pending one even with cancel-in-progress false. So a Windows check has its
+# own group, cone-desktop-windows-check-<ref>, which can never equal a
+# release's, resume's or promote's cone-desktop-<ref> (a ref starts with
+# refs/) and so never displaces one; every other run's group is unchanged.
 concurrency:
-  group: cone-desktop-${{ github.ref }}
+  group: cone-desktop-${{ github.event_name == 'workflow_dispatch' && inputs.windows_check != '' && 'windows-check-' || '' }}${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -166,6 +171,7 @@ jobs:
       # conversion (the runner's Git for Windows converts by default).
       - name: Check out with the commit's line endings
         run: |
+          git --version
           echo "core.autocrlf on the runner: $(git config --show-origin --get core.autocrlf || echo unset)"
           git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -235,6 +241,20 @@ jobs:
           $endpoint = (Select-String -Path cone/build.env -Pattern '^BUZZ_UPDATER_ENDPOINT=(.+)$').Matches.Groups[1].Value
           $installer = (Resolve-Path "target/release/bundle/nsis/${product}_$($env:VERSION)_x64-setup.exe").Path
           $dest = Join-Path $env:RUNNER_TEMP 'cone-install'
+          # The Cone icon, frame for frame, in the setup exe (installerIcon in
+          # cone/tauri.cone.windows.conf.json; NSIS's generic icon otherwise)
+          # and in the app (bundle.icon): each .ico frame is a PNG copied
+          # into the PE's icon resources byte for byte.
+          $ico = [IO.File]::ReadAllBytes((Resolve-Path cone/icons/icon.ico).Path)
+          $frames = @(for ($i = 0; $i -lt [BitConverter]::ToUInt16($ico, 4); $i++) {
+            $size = if ($ico[6 + 16 * $i] -eq 0) { 256 } else { $ico[6 + 16 * $i] }
+            $length = [BitConverter]::ToInt32($ico, 6 + 16 * $i + 8); $offset = [BitConverter]::ToInt32($ico, 6 + 16 * $i + 12)
+            [pscustomobject]@{ Size = $size; Text = [Text.Encoding]::Latin1.GetString($ico, $offset, $length) }
+          })
+          $setup = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($installer))
+          $found = @($frames | Where-Object { $setup.Contains($_.Text) } | ForEach-Object Size)
+          Check ($found -contains 256) "the setup exe carries cone/icons/icon.ico (frames found: $($found -join ', ') px)"
+
           # NSIS /D must be last and unquoted.
           $process = Start-Process $installer -ArgumentList "/S /D=$dest" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "the installer exited $($process.ExitCode)" }
@@ -242,6 +262,15 @@ jobs:
           Write-Output "== What the installer laid down in $dest"
           Get-ChildItem $dest -Recurse -File | Sort-Object FullName | ForEach-Object {
             '{0,12}  {1}' -f $_.Length, $_.FullName.Substring($dest.Length + 1)
+          }
+
+          # For the signed release: Tauri signs a bundled .exe only when it is
+          # not signed already, so a helper someone else signed keeps that
+          # signature. Information only.
+          Write-Output "== Authenticode signatures (information only)"
+          Get-ChildItem $dest -Recurse -Include *.exe, *.dll | Sort-Object FullName | ForEach-Object {
+            $sig = Get-AuthenticodeSignature $_.FullName
+            '{0,-14} {1}  {2}' -f $sig.Status, $_.FullName.Substring($dest.Length + 1), $(if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '' })
           }
 
           Write-Output "== The files"
@@ -279,12 +308,15 @@ jobs:
             Check ($target -eq $exe) "$folder\$product.lnk -> $target"
           }
           $userPath = (Get-ItemProperty HKCU:\Environment).Path -split ';'
-          Check ($userPath -contains (Join-Path $dest 'bin')) "the user PATH has $dest\bin (upstream's installer hook)"
+          # The merge of Cone's deltas kept upstream's bundle.windows.nsis.installerHooks.
+          Check ($userPath -contains (Join-Path $dest 'bin')) "the user PATH has $dest\bin (upstream's installerHooks ran)"
 
           Write-Output "== The executable"
           (Get-Item $exe).VersionInfo | Select-Object ProductName, FileDescription, CompanyName, ProductVersion, FileVersion, LegalCopyright, OriginalFilename | Format-List | Out-String | Write-Output
           Check ((Get-Item $exe).VersionInfo.ProductName -eq $product) "its version resource names $product"
           $binary = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($exe))
+          $found = @($frames | Where-Object { $binary.Contains($_.Text) } | ForEach-Object Size)
+          Check ($found -contains 256) "Buzz.exe carries cone/icons/icon.ico (frames found: $($found -join ', ') px)"
           Check ($binary.Contains($pubkey)) "cone/updater.pub's key is compiled in"
           # The x86_64 compiler may store a short literal as 8-byte immediates
           # (Slice 29 defect 237): the whole URL, or else every 8-byte piece of it.
@@ -324,6 +356,9 @@ jobs:
           Check (-not (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) "$product.lnk"))) "the Start menu shortcut removed"
           $userPath = (Get-ItemProperty HKCU:\Environment).Path -split ';'
           Check (-not ($userPath -contains (Join-Path $dest 'bin'))) "the user PATH entry removed"
+          # _?= keeps the uninstaller (and so its folder); nothing else may stay.
+          $left = @(Get-ChildItem $dest -Recurse -File | ForEach-Object { $_.FullName.Substring($dest.Length + 1) })
+          Check (($left.Count -eq 1) -and ($left[0] -eq 'uninstall.exe')) "the install folder holds only uninstall.exe (left: $($left -join ', '))"
 
           if ($fail.Count -gt 0) { throw "$($fail.Count) check(s) failed: $($fail -join '; ')" }
           Write-Output "verify: all checks passed"
