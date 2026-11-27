@@ -8,7 +8,8 @@
 # It runs on a Mac and in Git Bash on the Windows build (cone/windows-build.sh's
 # job): in-place edits go through sed_i (BSD and GNU sed differ on -i), and on
 # Windows the borrowed node_modules is a directory junction, removed before
-# its worktree (cone-buzz-infra Slice 38 decision 2).
+# its worktree; a link that will not go stops the test (case 0, cone-buzz-infra
+# Slice 38 decision 2).
 #
 # Every case runs in a disposable worktree at HEAD where the plant is
 # COMMITTED (an uncommitted plant is refused by the dirty-tree guard first,
@@ -40,11 +41,22 @@ snapshot() { # prints the path of a fresh committed worktree at HEAD
   printf '/node_modules\n' >> "$(git -C "$tmp" rev-parse --git-path info/exclude)"
   echo "$tmp"
 }
+unlink_borrowed() { # <worktree>: remove the borrowed node_modules link itself, never what it points at
+  if $windows; then
+    MSYS_NO_PATHCONV=1 cmd.exe /c rmdir "$(cygpath -w "$1/node_modules")" >/dev/null 2>&1
+  else
+    rm -f "$1/node_modules"
+  fi
+}
 drop() {
-  # The junction goes first, on its own: a recursive delete must never reach
-  # this checkout's node_modules through it.
-  if $windows && [[ -e "$1/node_modules" ]]; then
-    MSYS_NO_PATHCONV=1 cmd.exe /c rmdir "$(cygpath -w "$1/node_modules")" >/dev/null 2>&1 || true
+  # The link goes first, on its own, and must be gone before the forced
+  # removal: Git for Windows before 2.54 follows a directory junction while
+  # removing a worktree (git-for-windows/git#6151), which would reach this
+  # checkout's node_modules. A link that cannot be removed stops the test.
+  if [[ -e "$1/node_modules" || -L "$1/node_modules" ]]; then unlink_borrowed "$1" || true; fi
+  if [[ -e "$1/node_modules" || -L "$1/node_modules" ]]; then
+    echo "rebrand-test: cannot remove the node_modules link in $1; stopping before git worktree remove, which could follow it into $ROOT/node_modules. Remove the link by hand (cmd /c rmdir on Windows), then the worktree." >&2
+    exit 1
   fi
   git worktree remove --force "$1" >/dev/null 2>&1 || true
 }
@@ -70,6 +82,25 @@ case_() {
   verdict "$name" "$want_path" "$want_diag" "$status" "$out"
   drop "$tmp"
 }
+
+# 0. the cleanup itself: a borrowed node_modules link that will not go away
+# stops it before `git worktree remove --force`, with the worktree, the link
+# and this checkout's node_modules all still there. Two mutants of the
+# removal: it fails, and it reports success but leaves the link.
+tmp="$(snapshot)"
+for mutant in 'return 1' 'return 0'; do
+  status=0
+  # shellcheck disable=SC2034
+  out="$( eval "unlink_borrowed() { $mutant; }"; drop "$tmp" 2>&1 )" || status=$?
+  if [[ "$status" != 0 ]] && grep -qF "stopping before git worktree remove" <<<"$out" \
+     && [[ -f "$tmp/.git" ]] && [[ -e "$tmp/node_modules" ]] && [[ -d "$ROOT/node_modules/rolldown" ]]; then
+    echo "ok   cleanup stops when the link removal does '$mutant' and leaves the link"; pass=$((pass + 1))
+  else
+    echo "FAIL cleanup went on past a link it could not remove ('$mutant'): status $status, $out"; fail=$((fail + 1))
+  fi
+done
+drop "$tmp"
+[[ ! -e "$tmp" && -d "$ROOT/node_modules/rolldown" ]] || { echo "FAIL cleanup: the worktree $tmp is left, or $ROOT/node_modules lost rolldown"; fail=$((fail + 1)); }
 
 # 1. an extra "Buzz" string in a listed file: its count moves
 p1() { printf '\nexport const PLANTED_ONE = "Planted Buzz string";\n' >> src/app/Settings.tsx; }
