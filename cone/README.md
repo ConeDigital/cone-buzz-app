@@ -22,15 +22,18 @@ tree still differs from the tag under `cone/` only.
 | `build-env.sh` | refuses a repository-root `.env*`, clears every `BUZZ_*` the build reads or the shell exports, then loads `build.env`; the release and window `--config` deltas both platforms' builds write (`cone_release_delta`, `cone_window_delta`) |
 | `tauri.cone.conf.json` | the Tauri config delta: name, identifier, icons, `Info.plist`, DMG layout and background |
 | `tauri.cone.windows.conf.json` | the Windows-only delta: the publisher (`Cone Digital AB`, confirmed by the owner; the one place it is set) and the setup and uninstaller icons (`icons/icon.ico`; NSIS's generic icon otherwise) |
-| `windows-build.sh` | the Windows x86_64 NSIS installer, unsigned (below) |
+| `windows-build.sh` | the Windows x86_64 NSIS installer in two phases, `compile` and `bundle`, unsigned or (`--release`) signed (below) |
+| `windows-sign.lock`, `windows-sign.sh`, `windows-sign-test.sh` | the Authenticode signature (Azure Artifact Signing): the pinned dlib package and its SHA-256, the metadata, the `signCommand` delta, the token warm-up, the probe's signing; their test against mocks |
+| `windows-install-check.ps1`, `windows-signature-check.ps1` | what the installer lays down, checked on the runner (`-Signed`: every executable signed by the publisher and timestamped) |
+| `workflow-test.mjs` | which jobs of `cone-desktop.yml` run for which event and ref (the sign probe above all), the workflow's standing rules, and planted changes each failing a named check |
 | `Info.plist`, `icons/`, `make-assets.py` | the menu-bar name and the microphone usage string; the icons and DMG background, generated from `icons/source.png`; `icon.ico` (Windows only) is the mark full-bleed (`make-assets.py ico`) |
-| `cone.just` | `cone-desktop-build`, `cone-shallow-check`, `cone-build-env-check`, `cone-rebrand-check`, `cone-rebrand-test`, `cone-notarize-test`, `cone-updater-test`, `cone-upstream-test` |
+| `cone.just` | `cone-desktop-build`, `cone-shallow-check`, `cone-build-env-check`, `cone-rebrand-check`, `cone-rebrand-test`, `cone-notarize-test`, `cone-updater-test`, `cone-upstream-test`, `cone-sign-test`, `cone-workflow-test` |
 | `rebrand.sh`, `rebrand/`, `rebrand-test.sh` | the in-app rebrand: the transform, its manifests and replacement pictures, its mutation test (below) |
 | `upstream-watch.sh`, `upstream-test.sh` | the upstream watcher (below): the update pull request for each new stable tag, the tag after it merges, the workflow guard; their test |
 | `updater.pub` | the updater's public key (minisign `A11AAB7556EB3BE2`, the old app's), compiled into every build with the feed `https://buzz.cone.digital/desktop/2/latest.json` |
 | `sign-nested.sh` | signs the helpers Buzz 1.0 bundles in `Contents/Resources/bin` (Tauri leaves them linker-signed), then the app |
 | `notarize.sh`, `release-advance.sh`, `notarize-test.sh` | notarization (submit; wait through dropped requests; staple), the resumable stages of one architecture's release, and their test against mocks |
-| `updater-archive.sh`, `updater-verify.sh`, `promote-check.sh`, `updater-test.sh`, `test/updater/` | the updater archive from the stapled app; the signature check an app makes; the promotion's refusals (an older version, any object but `2/latest.json`); their test |
+| `updater-archive.sh`, `updater-verify.sh`, `promote-check.sh`, `updater-test.sh`, `test/updater/` | the updater archive from the stapled app; the signature check an app makes; the promotion's refusals (an older version, a platform the feed has dropped, any object but `2/latest.json`); their test, with `promote-check.sh`'s planted mutations |
 
 ## Build locally (unsigned)
 
@@ -54,10 +57,12 @@ Tauri's default `currentUser`, so no admin rights). It runs in Git Bash on
 Windows with upstream's pinned Rust, Node and pnpm (no hermit, no `just`
 there): `cone_build_env`, the same release delta (no updater signature:
 `createUpdaterArtifacts` false) and window delta as the Macs plus
-`tauri.cone.windows.conf.json`, the rebrand applied, scanned and restored
-around `pnpm tauri build --ci --no-sign --bundles nsis`, the bundle gate,
-and a clean tree. It is not Authenticode-signed: Windows warns about an
-unknown publisher.
+`tauri.cone.windows.conf.json`. It is two phases, as the signed release
+needs them (below): `compile` applies, scans and restores the rebrand around
+`pnpm tauri build --ci --no-bundle` and gates the built frontend; `bundle`
+runs `pnpm tauri bundle --ci --bundles nsis --no-sign` with the same deltas
+on the clean tree. `cone/windows-build.sh <version>` runs both. It is not
+Authenticode-signed: Windows warns about an unknown publisher.
 
 The job **Windows check (unsigned)** in `cone-desktop.yml` runs it on
 `windows-2025` from any branch, with no environment and no secret:
@@ -67,9 +72,9 @@ gh workflow run cone-desktop.yml -R ConeDigital/cone-buzz-app --ref <branch> -f 
 gh run download <run> -R ConeDigital/cone-buzz-app -n cone-desktop-windows-x64-unsigned
 ```
 
-It runs the rebrand's mutation test and check on Windows, builds, installs
-the installer silently into a scratch folder of the runner, and checks what
-it wrote: `Buzz.exe` (upstream's binary name, as on a Mac) and `bin\buzz.exe`,
+It runs the rebrand's mutation test and check on Windows, compiles, bundles,
+installs the installer silently into a scratch folder of the runner, and
+checks what it wrote (`cone/windows-install-check.ps1`): `Buzz.exe` (upstream's binary name, as on a Mac) and `bin\buzz.exe`,
 `bin\goose-acp.exe`, `bin\buzz-agent-command.exe`; the uninstall entry's
 name, publisher and version; the `buzz://` scheme registered for
 `digital.cone.desktop`; the shortcuts and the user `PATH`; Cone's updater
@@ -92,6 +97,49 @@ kept runtime names, 29 of them, as on a Mac. The runner's Git converts to
 CRLF by default (`core.autocrlf true` in its system config), which would
 break the rebrand's hashes and exact matches: the job sets it to `false`
 before checking out.
+
+## Windows (signed, the release)
+
+The job **Build Windows x64 (signed)** (`build-windows`) runs on every
+release tag beside the macOS builds, in `cone-release`, and is the check's
+steps with Cone's Authenticode signature (`cone-buzz-infra` Slice 48 decision
+W7, ADR-492): Azure Artifact Signing over GitHub OIDC, inside Tauri's build.
+
+1. `cone/windows-sign.sh prepare` (before the compile, no Azure yet): the
+   dlib package `Microsoft.ArtifactSigning.Client` at the version and SHA-256
+   in `cone/windows-sign.lock`, its x64 dlib, the .NET runtime its
+   runtimeconfig names asserted on the runner (never installed), `signtool`
+   through the Windows SDK's registry root; it writes the metadata
+   (endpoint, account, profile from `cone-release`, every credential type
+   but `AzureCliCredential` excluded) and the per-run delta
+   `bundle.windows.signCommand` in its object form, outside the tree.
+2. `cone/windows-build.sh compile <v> --release` — half an hour cold.
+3. `azure/login` (OIDC, the app registration's one federated credential),
+   then at once `cone/windows-sign.sh token`: the Azure CLI fetches the
+   token the dlib asks for while GitHub's assertion (minutes) is fresh, and
+   caches it (an hour or more).
+4. `cone/windows-build.sh bundle <v> --release <delta>` with the updater key:
+   Tauri signs `Buzz.exe`, the `bin\` helpers, the NSIS plugins, the
+   uninstaller and the installer, and writes the installer's `.sig` last.
+5. `cone/windows-install-check.ps1 -Signed`: the installer, `Buzz.exe`, every
+   helper and the installed `uninstall.exe` signed by `Cone Digital AB` and
+   timestamped (`signtool verify /pa /all /tw` and
+   `Get-AuthenticodeSignature`), with every check of the unsigned build.
+
+The release (`release`) needs both macOS builds and `build-windows`, verifies
+the installer's `.sig` against `updater.pub` and publishes
+`Cone_<v>_x64-setup.exe` and its `.sig` with the DMGs and archives;
+`SHA256SUMS` covers it. A resume carries the installer over from the run it
+resumes (`windows-resume`); if that run's Windows job failed, re-run it there.
+
+**The sign probe** proves the signing on two small test executables before
+any build uses it. The environment admits only `cone-desktop-v*` tags, so a
+probe is a tag `cone-desktop-v0.0.0-signprobe.N`: its push runs the job
+`sign-probe` alone (the owner approves it), which prepares, signs one file at
+once and the second after GitHub's assertion has expired, and verifies both.
+Every job that builds, releases or promotes refuses such a ref in its own
+condition; `cone/workflow-test.mjs` proves which jobs run for it. A probe tag
+can be deleted afterwards; nothing refers to it.
 
 ## What a Mac shares between apps
 
@@ -202,7 +250,7 @@ Re-read the trigger signals and the facts in `cone-buzz-infra`
    The line is `2.x` (ADR-340 decision 9); the old app's line ended at `1.1.x`.
 3. The owner approves the run (Actions → the run → *Review deployments* →
    `cone-release`). Both builds wait for it; no one approves through the API.
-4. The run builds Apple silicon and Intel, signs the app, the helpers Buzz 1.0
+4. The run builds Apple silicon, Intel and Windows x86_64 (above), signs the app, the helpers Buzz 1.0
    bundles in `Contents/Resources/bin` (`cone/sign-nested.sh`) and the DMG,
    notarizes and staples the app and the DMG, verifies them (`codesign`,
    `spctl`, `stapler`, the entitlements, Team ID, hardened runtime and `lipo`
@@ -217,13 +265,19 @@ Re-read the trigger signals and the facts in `cone-buzz-infra`
    stopped, never rebuilding or resubmitting what Apple already has.
 6. **Promote** — the release reaches installed apps only now:
    `gh workflow run cone-desktop.yml -R ConeDigital/cone-buzz-app --ref cone-desktop-v2.Y.Z -f promote=cone-desktop-v2.Y.Z`,
-   approved by the owner. It verifies both archives against `cone/updater.pub`
-   and `SHA256SUMS`, writes `latest.json` and uploads it to the object
-   `2/latest.json` in the R2 bucket `cone-desktop-updates`, then reads it back
-   through `https://buzz.cone.digital/desktop/2/latest.json`. It refuses an
-   older version than the object holds and any other object
-   (`cone/promote-check.sh`), and fails if the old app's feed
-   (`/desktop/latest.json`, the bucket root) changed by a byte.
+   approved by the owner. It verifies both archives and the Windows
+   installer against `cone/updater.pub` and `SHA256SUMS`, writes
+   `latest.json` with exactly `darwin-aarch64`, `darwin-x86_64` and
+   `windows-x86_64` and uploads it to the object `2/latest.json` in the R2
+   bucket `cone-desktop-updates`, then reads it back through
+   `https://buzz.cone.digital/desktop/2/latest.json`. It refuses an older
+   version than the object holds, a manifest that drops a platform the
+   object has, and any other object (`cone/promote-check.sh`), and fails if
+   the old app's feed (`/desktop/latest.json`, the bucket root) changed by a
+   byte. The bucket token is read from `CONE_FEED_R2_ACCESS_KEY_ID`,
+   `CONE_FEED_R2_SECRET_ACCESS_KEY` and `CONE_FEED_R2_ENDPOINT` (decision W9):
+   the names older tags read are deleted from `cone-release` before the first
+   Windows promotion, so an older tag's two-platform promote cannot write.
 
 Secrets are in the environment `cone-release` only (deployments from tags
 `cone-desktop-v*`, the owner a required reviewer); their sources are in
