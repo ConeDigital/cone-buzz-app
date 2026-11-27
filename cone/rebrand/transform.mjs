@@ -53,6 +53,13 @@ const WORD = "Buzz";
 const require = createRequire(path.join(ROOT, "package.json"));
 const { parseAst } = require("rolldown/parseAst");
 
+// Every path this script names, compares, prints or matches against a
+// manifest row is relative to the repository root and separated by `/` on
+// every platform: on Windows path.relative and path.join give backslashes,
+// and the manifests and the shell driver must read the same on a Mac and on
+// the Windows build (cone-buzz-infra Slice 38 decision 2).
+const relPath = (abs) => path.relative(ROOT, abs).split(path.sep).join("/");
+
 // ---------------------------------------------------------------- scope ----
 
 // The app crate and every workspace crate it links, transitively (path
@@ -70,7 +77,7 @@ function pathDeps(crateDir) {
     if (h) { section = h[1]; continue; }
     if (!/(^|\.)(dependencies|build-dependencies)$/.test(section) || /dev-dependencies/.test(section)) continue;
     const m = line.match(/path\s*=\s*"([^"]+)"/);
-    if (m) deps.push(path.relative(ROOT, path.resolve(ROOT, crateDir, m[1])));
+    if (m) deps.push(relPath(path.resolve(ROOT, crateDir, m[1])));
   }
   return deps;
 }
@@ -119,7 +126,7 @@ function walk(dir, out) {
     if (entry.isDirectory()) {
       if (entry.name === "node_modules" || entry.name === "target" || entry.name === "dist") continue;
       walk(p, out);
-    } else if (entry.isFile()) out.push(path.relative(ROOT, p));
+    } else if (entry.isFile()) out.push(relPath(p));
   }
   return out;
 }
@@ -139,7 +146,7 @@ function rustIncludes(sources) {
     const tests = rustTestSpans(text);
     for (const m of text.matchAll(/include_str!\(\s*"([^"]+)"\s*,?\s*\)/g)) {
       if (tests.some(([a, b]) => m.index >= a && m.index < b)) continue; // a test's fixture, not shipped
-      found.add(path.relative(ROOT, path.resolve(ROOT, path.dirname(rel), m[1])));
+      found.add(relPath(path.resolve(ROOT, path.dirname(rel), m[1])));
     }
   }
   return [...found];
@@ -152,8 +159,8 @@ function rustIncludes(sources) {
 // run). Shaders, stylesheets and packages' icons carry no words.
 function resolveSpec(fromRel, spec) {
   const bare = spec.replace(/\?.*$/, "");
-  if (bare.startsWith("@/")) return path.join("src", bare.slice(2));
-  if (bare.startsWith(".")) return path.relative(ROOT, path.resolve(ROOT, path.dirname(fromRel), bare));
+  if (bare.startsWith("@/")) return path.posix.join("src", bare.slice(2));
+  if (bare.startsWith(".")) return relPath(path.resolve(ROOT, path.dirname(fromRel), bare));
   return null;
 }
 
