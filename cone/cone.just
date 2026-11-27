@@ -87,15 +87,12 @@ cone-desktop-build target="aarch64-apple-darwin" version="2.0.0-local":
     rustup target add "$TARGET" >/dev/null
     export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
     pnpm install --frozen-lockfile
-    # The second delta: the version and the updater (RFC 7396 replaces any
-    # endpoints array); the same key and endpoint build.rs compiles in.
+    # The second delta: the version and the updater (cone/build-env.sh,
+    # shared with cone/windows-build.sh).
     delta="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/cone-build.XXXXXX")/tauri.release.conf.json"
     artifacts=false
     [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]] && artifacts=true
-    node -e 'const [file, version, pubkey, endpoint, artifacts] = process.argv.slice(1);
-      require("fs").writeFileSync(file, JSON.stringify({ version, bundle: { createUpdaterArtifacts: artifacts === "true" },
-        plugins: { updater: { pubkey, endpoints: [endpoint] } } }, null, 2) + "\n");' \
-      "$delta" "$VERSION" "$BUZZ_UPDATER_PUBLIC_KEY" "$BUZZ_UPDATER_ENDPOINT" "$artifacts"
+    cone_release_delta "$delta" "$VERSION" "$artifacts"
     echo "updater: $BUZZ_UPDATER_ENDPOINT, updater artifacts $artifacts"
     # The in-app rebrand (cone-buzz-infra Slice 51, ADR-364): cone/rebrand.sh
     # rewrites the working copy (exact manifests, the residue scan) after the
@@ -107,7 +104,7 @@ cone-desktop-build target="aarch64-apple-darwin" version="2.0.0-local":
     cone/rebrand.sh apply
     cone/rebrand.sh scan
     windows="$(dirname "$delta")/tauri.cone-windows.conf.json"
-    node cone/rebrand/transform.mjs window-delta "$TARGET" > "$windows"
+    cone_window_delta "$TARGET" "$windows"
     rm -rf "target/$TARGET/release/bundle"
     # CI=true makes Tauri's bundle_dmg.sh skip its Finder AppleScript (the
     # window layout and the background), which needs an Automation grant on a

@@ -26,12 +26,18 @@ die() { echo "rebrand: $*" >&2; exit 1; }
 # replacement is files/<path>.
 replacement_rows() { grep -v -E '^(#|$)' "$REBRAND/replacements.tsv" || true; }
 
+# A file's SHA-256: sha256sum on Linux and in Git Bash on Windows (which has
+# no shasum), shasum on a Mac without sha256sum.
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
+}
+
 verify_replacements() {
   local bad=0 rel sha have
   while IFS=$'\t' read -r rel sha; do
     [[ -f "$REBRAND/files/$rel" ]] || { echo "rebrand: $rel: no replacement at $REBRAND/files/$rel" >&2; bad=1; continue; }
     [[ -f "$rel" ]] || { echo "rebrand: $rel: replacement target missing upstream" >&2; bad=1; continue; }
-    have="$(shasum -a 256 "$rel" | cut -d' ' -f1)"
+    have="$(sha256 "$rel")"
     [[ "$have" == "$sha" ]] || { echo "rebrand: $rel: upstream content changed (sha256 $have, pinned $sha) — review the diff, carry it into $REBRAND/files/$rel, then update replacements.tsv" >&2; bad=1; }
   done < <(replacement_rows)
   (( bad == 0 )) || exit 1
